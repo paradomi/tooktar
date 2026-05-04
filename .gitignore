@@ -1,0 +1,20 @@
+# 가상환경
+venv/
+
+# 환경변수 (API 키 등)
+.env
+
+# 파이썬 캐시
+__pycache__/
+*.pyc
+
+# Streamlit 비밀
+.streamlit/secrets.toml
+
+# Claude 작업 폴더
+.claude/
+
+# OS/IDE
+.DS_Store
+.vscode/
+.idea/
