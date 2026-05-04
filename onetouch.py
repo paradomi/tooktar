@@ -3,13 +3,25 @@ import os
 
 import requests
 import streamlit as st
-from dotenv import load_dotenv
 
-load_dotenv()
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
 
-API_KEY = os.getenv("GBIS_API_KEY")
-KAKAO_JS_KEY = os.getenv("KAKAO_JS_KEY")
-KAKAO_REST_KEY = os.getenv("KAKAO_REST_KEY")
+
+def get_secret(key):
+    """st.secrets (Cloud) 또는 os.getenv (로컬) 에서 키 읽기"""
+    try:
+        return st.secrets[key]
+    except Exception:
+        return os.getenv(key)
+
+
+API_KEY = get_secret("GBIS_API_KEY")
+KAKAO_JS_KEY = get_secret("KAKAO_JS_KEY")
+KAKAO_REST_KEY = get_secret("KAKAO_REST_KEY")
 LOCATIONS_FILE = os.path.join(os.path.dirname(__file__), "locations.json")
 API_BASE = "https://apis.data.go.kr/6410000"
 
