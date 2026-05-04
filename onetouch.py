@@ -3,6 +3,7 @@ import os
 
 import requests
 import streamlit as st
+from streamlit_javascript import st_javascript
 
 try:
     from dotenv import load_dotenv
@@ -382,6 +383,21 @@ else:
         unsafe_allow_html=True,
     )
 
+    # 현재 위치 가져오기 (메인 페이지 컨텍스트에서 실행)
+    my_location = st_javascript("""
+    await new Promise((resolve) => {
+        if (!navigator.geolocation) {
+            resolve(null);
+            return;
+        }
+        navigator.geolocation.getCurrentPosition(
+            (pos) => resolve({lat: pos.coords.latitude, lng: pos.coords.longitude}),
+            (err) => resolve(null),
+            {enableHighAccuracy: true, timeout: 5000}
+        );
+    });
+    """)
+
     st.write("---")
     st.markdown("### 어디로 가시나요?")
     st.write("")
@@ -428,6 +444,16 @@ else:
         loc_y = loc.get("y", 0)
         if loc_x and loc_y and KAKAO_JS_KEY:
             station_name = loc.get("stationName", "").replace("'", "\\'")
+
+            # 현재 위치 정보
+            my_lat = ""
+            my_lng = ""
+            has_location = False
+            if isinstance(my_location, dict) and my_location.get("lat"):
+                my_lat = my_location["lat"]
+                my_lng = my_location["lng"]
+                has_location = True
+
             map_html = f"""
             <!DOCTYPE html>
             <html>
@@ -460,7 +486,6 @@ else:
                         font-size: 15px;
                         border-left: 4px solid #3498db;
                     }}
-                    #status {{ text-align: center; color: #888; font-size: 14px; margin-top: 8px; }}
                     #kakao-link {{
                         display: block;
                         text-align: center;
@@ -480,16 +505,17 @@ else:
                 <div id="map"></div>
                 <div id="info-box">
                     <div class="title">🚏 {station_name}</div>
-                    <div class="detail" id="route-info">경로를 계산하는 중...</div>
+                    <div class="detail" id="route-info">{"경로를 계산하는 중..." if has_location else "위치 정보를 가져오는 중... (새로고침 해주세요)"}</div>
                 </div>
                 <div id="steps"></div>
-                <div id="status"></div>
-                <a id="kakao-link" href="https://map.kakao.com/link/to/{station_name},{loc_y},{loc_x}" target="_blank" style="display:none;">
+                <a id="kakao-link" href="https://map.kakao.com/link/{"from/내위치," + str(my_lat) + "," + str(my_lng) + "/to/" if has_location else "to/"}{station_name},{loc_y},{loc_x}" target="_blank">
                     🗺️ 카카오맵에서 상세 보기
                 </a>
                 <script>
                     var destLat = {loc_y};
                     var destLng = {loc_x};
+                    var myLat = {my_lat if has_location else "null"};
+                    var myLng = {my_lng if has_location else "null"};
                     var REST_KEY = '{KAKAO_REST_KEY}';
 
                     kakao.maps.load(function() {{
@@ -509,131 +535,102 @@ else:
                         }});
                         destInfo.open(map, destMarker);
 
-                        if (!navigator.geolocation) {{
-                            document.getElementById('route-info').innerText = '위치 기능을 지원하지 않는 브라우저입니다.';
+                        if (myLat === null) {{
+                            document.getElementById('route-info').innerText = '📍 위치를 가져올 수 없습니다. 페이지를 새로고침 후 위치 권한을 허용해주세요.';
                             return;
                         }}
 
-                        navigator.geolocation.getCurrentPosition(function(pos) {{
-                            var myLat = pos.coords.latitude;
-                            var myLng = pos.coords.longitude;
+                        // 내 위치 마커
+                        var myImg = new kakao.maps.MarkerImage(
+                            'https://t1.daumcdn.net/localimg/localimages/07/mapapidoc/markerStar.png',
+                            new kakao.maps.Size(24, 35)
+                        );
+                        var myMarker = new kakao.maps.Marker({{
+                            position: new kakao.maps.LatLng(myLat, myLng),
+                            map: map,
+                            image: myImg
+                        }});
+                        var myInfo = new kakao.maps.InfoWindow({{
+                            content: '<div style="padding:5px;font-size:13px;color:#e74c3c;font-weight:bold;">📍 내 위치</div>'
+                        }});
+                        myInfo.open(map, myMarker);
 
-                            // 내 위치 마커
-                            var myImg = new kakao.maps.MarkerImage(
-                                'https://t1.daumcdn.net/localimg/localimages/07/mapapidoc/markerStar.png',
-                                new kakao.maps.Size(24, 35)
-                            );
-                            var myMarker = new kakao.maps.Marker({{
-                                position: new kakao.maps.LatLng(myLat, myLng),
-                                map: map,
-                                image: myImg
-                            }});
-                            var myInfo = new kakao.maps.InfoWindow({{
-                                content: '<div style="padding:5px;font-size:13px;color:#e74c3c;font-weight:bold;">📍 내 위치</div>'
-                            }});
-                            myInfo.open(map, myMarker);
-
-                            // 카카오맵 링크 업데이트
-                            var link = document.getElementById('kakao-link');
-                            link.href = 'https://map.kakao.com/link/from/내위치,' + myLat + ',' + myLng +
-                                        '/to/{station_name},' + destLat + ',' + destLng;
-                            link.style.display = 'block';
-
-                            // 카카오 모빌리티 도보 경로 API 호출
-                            fetch('https://apis-navi.kakaomobility.com/v1/directions?origin=' +
-                                myLng + ',' + myLat + '&destination=' + destLng + ',' + destLat +
-                                '&priority=RECOMMEND', {{
-                                headers: {{ 'Authorization': 'KakaoAK ' + REST_KEY }}
-                            }})
-                            .then(function(r) {{ return r.json(); }})
-                            .then(function(data) {{
-                                if (data.routes && data.routes[0] && data.routes[0].result_code === 0) {{
-                                    var route = data.routes[0];
-                                    var summary = route.summary;
-                                    var dist = summary.distance;
-                                    var dur = summary.duration;
-
-                                    // 거리/시간 표시
-                                    var distText = dist >= 1000 ? (dist/1000).toFixed(1) + 'km' : dist + 'm';
-                                    var durMin = Math.ceil(dur / 60);
-                                    document.getElementById('route-info').innerHTML =
-                                        '🚶 도보 <b>' + distText + '</b> · 약 <b>' + durMin + '분</b>';
-
-                                    // 경로 폴리라인 그리기
-                                    var linePath = [];
-                                    route.sections.forEach(function(section) {{
-                                        section.roads.forEach(function(road) {{
-                                            for (var i = 0; i < road.vertexes.length; i += 2) {{
-                                                linePath.push(new kakao.maps.LatLng(road.vertexes[i+1], road.vertexes[i]));
-                                            }}
-                                        }});
-                                    }});
-
-                                    var polyline = new kakao.maps.Polyline({{
-                                        path: linePath,
-                                        strokeWeight: 5,
-                                        strokeColor: '#3498db',
-                                        strokeOpacity: 0.9,
-                                        strokeStyle: 'solid'
-                                    }});
-                                    polyline.setMap(map);
-
-                                    // 안내 단계 표시
-                                    var stepsHtml = '';
-                                    var stepNum = 1;
-                                    route.sections.forEach(function(section) {{
-                                        section.guides.forEach(function(guide) {{
-                                            if (guide.name && guide.guidance) {{
-                                                stepsHtml += '<div class="step">' + stepNum + '. ' +
-                                                    guide.guidance + ' (' + guide.name + ')</div>';
-                                                stepNum++;
-                                            }}
-                                        }});
-                                    }});
-                                    if (stepsHtml) {{
-                                        document.getElementById('steps').innerHTML = stepsHtml;
-                                    }}
-
-                                    // 경로에 맞게 지도 영역 조정
-                                    var bounds = new kakao.maps.LatLngBounds();
-                                    linePath.forEach(function(p) {{ bounds.extend(p); }});
-                                    map.setBounds(bounds);
-                                }} else {{
-                                    // 자동차 경로 실패시 직선 표시
-                                    showStraightLine(map, myLat, myLng);
-                                }}
-                            }})
-                            .catch(function(err) {{
-                                showStraightLine(map, myLat, myLng);
-                            }});
-
-                            function showStraightLine(map, myLat, myLng) {{
-                                var linePath = [
-                                    new kakao.maps.LatLng(myLat, myLng),
-                                    new kakao.maps.LatLng(destLat, destLng)
-                                ];
-                                var polyline = new kakao.maps.Polyline({{
-                                    path: linePath,
-                                    strokeWeight: 4,
-                                    strokeColor: '#3498db',
-                                    strokeOpacity: 0.7,
-                                    strokeStyle: 'dashed'
-                                }});
-                                polyline.setMap(map);
-                                var dist = Math.round(polyline.getLength());
-                                var walkMin = Math.ceil(dist / 67);
+                        // 카카오 모빌리티 경로 API
+                        fetch('https://apis-navi.kakaomobility.com/v1/directions?origin=' +
+                            myLng + ',' + myLat + '&destination=' + destLng + ',' + destLat +
+                            '&priority=RECOMMEND', {{
+                            headers: {{ 'Authorization': 'KakaoAK ' + REST_KEY }}
+                        }})
+                        .then(function(r) {{ return r.json(); }})
+                        .then(function(data) {{
+                            if (data.routes && data.routes[0] && data.routes[0].result_code === 0) {{
+                                var route = data.routes[0];
+                                var dist = route.summary.distance;
+                                var dur = route.summary.duration;
                                 var distText = dist >= 1000 ? (dist/1000).toFixed(1) + 'km' : dist + 'm';
+                                var durMin = Math.ceil(dur / 60);
                                 document.getElementById('route-info').innerHTML =
-                                    '🚶 직선 거리 <b>' + distText + '</b> · 도보 약 <b>' + walkMin + '분</b>';
+                                    '🚶 거리 <b>' + distText + '</b> · 약 <b>' + durMin + '분</b>';
+
+                                var linePath = [];
+                                route.sections.forEach(function(section) {{
+                                    section.roads.forEach(function(road) {{
+                                        for (var i = 0; i < road.vertexes.length; i += 2) {{
+                                            linePath.push(new kakao.maps.LatLng(road.vertexes[i+1], road.vertexes[i]));
+                                        }}
+                                    }});
+                                }});
+
+                                new kakao.maps.Polyline({{
+                                    path: linePath,
+                                    strokeWeight: 5,
+                                    strokeColor: '#3498db',
+                                    strokeOpacity: 0.9,
+                                    strokeStyle: 'solid'
+                                }}).setMap(map);
+
+                                var stepsHtml = '';
+                                var stepNum = 1;
+                                route.sections.forEach(function(section) {{
+                                    section.guides.forEach(function(guide) {{
+                                        if (guide.name && guide.guidance) {{
+                                            stepsHtml += '<div class="step">' + stepNum + '. ' +
+                                                guide.guidance + ' (' + guide.name + ')</div>';
+                                            stepNum++;
+                                        }}
+                                    }});
+                                }});
+                                if (stepsHtml) document.getElementById('steps').innerHTML = stepsHtml;
 
                                 var bounds = new kakao.maps.LatLngBounds();
-                                bounds.extend(new kakao.maps.LatLng(myLat, myLng));
-                                bounds.extend(new kakao.maps.LatLng(destLat, destLng));
+                                linePath.forEach(function(p) {{ bounds.extend(p); }});
                                 map.setBounds(bounds);
+                            }} else {{
+                                showStraightLine();
                             }}
-                        }}, function(err) {{
-                            document.getElementById('route-info').innerText = '📍 위치 권한을 허용해주세요.';
-                        }}, {{ enableHighAccuracy: true, timeout: 5000 }});
+                        }})
+                        .catch(function() {{ showStraightLine(); }});
+
+                        function showStraightLine() {{
+                            var path = [
+                                new kakao.maps.LatLng(myLat, myLng),
+                                new kakao.maps.LatLng(destLat, destLng)
+                            ];
+                            var pl = new kakao.maps.Polyline({{
+                                path: path, strokeWeight: 4,
+                                strokeColor: '#3498db', strokeOpacity: 0.7, strokeStyle: 'dashed'
+                            }});
+                            pl.setMap(map);
+                            var dist = Math.round(pl.getLength());
+                            var walkMin = Math.ceil(dist / 67);
+                            var distText = dist >= 1000 ? (dist/1000).toFixed(1) + 'km' : dist + 'm';
+                            document.getElementById('route-info').innerHTML =
+                                '🚶 직선 거리 <b>' + distText + '</b> · 도보 약 <b>' + walkMin + '분</b>';
+                            var bounds = new kakao.maps.LatLngBounds();
+                            bounds.extend(new kakao.maps.LatLng(myLat, myLng));
+                            bounds.extend(new kakao.maps.LatLng(destLat, destLng));
+                            map.setBounds(bounds);
+                        }}
                     }});
                 </script>
             </body>
