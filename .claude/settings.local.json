@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pip install *)",
+      "Bash(python test_api.py)",
+      "Bash(streamlit run *)",
+      "Bash(python -m streamlit run onetouch.py)",
+      "Bash(python test_station.py)",
+      "Bash(python test_route.py)",
+      "Bash(git init *)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git config *)",
+      "Bash(gh auth *)",
+      "Bash(git remote *)",
+      "Bash(git push *)",
+      "Bash(python -c \"import onetouch\")"
+    ]
+  }
+}
