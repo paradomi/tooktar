@@ -423,42 +423,129 @@ else:
         else:
             st.error("도착 정보를 가져올 수 없습니다.")
 
-        # 카카오맵 표시
+        # 카카오맵 + 길안내
         loc_x = loc.get("x", 0)
         loc_y = loc.get("y", 0)
         if loc_x and loc_y and KAKAO_JS_KEY:
             station_name = loc.get("stationName", "").replace("'", "\\'")
+            loc_name = loc.get("name", "").replace("'", "\\'")
             map_html = f"""
             <!DOCTYPE html>
             <html>
             <head>
                 <meta charset="utf-8">
+                <style>
+                    body {{ margin: 0; font-family: -apple-system, BlinkMacSystemFont, sans-serif; }}
+                    #map {{ width: 100%; height: 300px; border-radius: 15px; }}
+                    #nav-btn {{
+                        display: block;
+                        width: 100%;
+                        margin-top: 10px;
+                        padding: 16px;
+                        font-size: 20px;
+                        font-weight: bold;
+                        color: white;
+                        background: #FEE500;
+                        color: #3C1E1E;
+                        border: none;
+                        border-radius: 12px;
+                        cursor: pointer;
+                        text-align: center;
+                        text-decoration: none;
+                    }}
+                    #nav-btn:hover {{ background: #FDD835; }}
+                    #status {{ text-align: center; color: #888; font-size: 14px; margin-top: 6px; }}
+                </style>
                 <script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey={KAKAO_JS_KEY}&autoload=false"></script>
             </head>
             <body>
-                <div id="map" style="width:100%;height:300px;border-radius:15px;"></div>
+                <div id="map"></div>
+                <a id="nav-btn" href="https://map.kakao.com/link/to/{station_name},{loc_y},{loc_x}" target="_blank">
+                    🗺️ 카카오맵 길안내
+                </a>
+                <div id="status">현재 위치를 확인하는 중...</div>
                 <script>
+                    var destLat = {loc_y};
+                    var destLng = {loc_x};
+
                     kakao.maps.load(function() {{
                         var container = document.getElementById('map');
                         var options = {{
-                            center: new kakao.maps.LatLng({loc_y}, {loc_x}),
-                            level: 3
+                            center: new kakao.maps.LatLng(destLat, destLng),
+                            level: 5
                         }};
                         var map = new kakao.maps.Map(container, options);
-                        var marker = new kakao.maps.Marker({{
-                            position: new kakao.maps.LatLng({loc_y}, {loc_x})
+
+                        // 목적지 마커 (정류장)
+                        var destMarker = new kakao.maps.Marker({{
+                            position: new kakao.maps.LatLng(destLat, destLng),
+                            map: map
                         }});
-                        marker.setMap(map);
-                        var infowindow = new kakao.maps.InfoWindow({{
-                            content: '<div style="padding:5px;font-size:14px;font-weight:bold;">{station_name}</div>'
+                        var destInfo = new kakao.maps.InfoWindow({{
+                            content: '<div style="padding:5px;font-size:13px;font-weight:bold;">🚏 {station_name}</div>'
                         }});
-                        infowindow.open(map, marker);
+                        destInfo.open(map, destMarker);
+
+                        // 현재 위치 가져오기
+                        if (navigator.geolocation) {{
+                            navigator.geolocation.getCurrentPosition(function(pos) {{
+                                var myLat = pos.coords.latitude;
+                                var myLng = pos.coords.longitude;
+
+                                // 현재 위치 마커
+                                var myImg = new kakao.maps.MarkerImage(
+                                    'https://t1.daumcdn.net/localimg/localimages/07/mapapidoc/markerStar.png',
+                                    new kakao.maps.Size(24, 35)
+                                );
+                                var myMarker = new kakao.maps.Marker({{
+                                    position: new kakao.maps.LatLng(myLat, myLng),
+                                    map: map,
+                                    image: myImg
+                                }});
+                                var myInfo = new kakao.maps.InfoWindow({{
+                                    content: '<div style="padding:5px;font-size:13px;color:#e74c3c;font-weight:bold;">📍 내 위치</div>'
+                                }});
+                                myInfo.open(map, myMarker);
+
+                                // 경로선 표시
+                                var linePath = [
+                                    new kakao.maps.LatLng(myLat, myLng),
+                                    new kakao.maps.LatLng(destLat, destLng)
+                                ];
+                                var polyline = new kakao.maps.Polyline({{
+                                    path: linePath,
+                                    strokeWeight: 4,
+                                    strokeColor: '#3498db',
+                                    strokeOpacity: 0.7,
+                                    strokeStyle: 'dashed'
+                                }});
+                                polyline.setMap(map);
+
+                                // 두 마커가 모두 보이도록 영역 조정
+                                var bounds = new kakao.maps.LatLngBounds();
+                                bounds.extend(new kakao.maps.LatLng(myLat, myLng));
+                                bounds.extend(new kakao.maps.LatLng(destLat, destLng));
+                                map.setBounds(bounds);
+
+                                // 길안내 링크에 출발지 포함
+                                document.getElementById('nav-btn').href =
+                                    'https://map.kakao.com/link/from/내위치,' + myLat + ',' + myLng +
+                                    '/to/{station_name},' + destLat + ',' + destLng;
+
+                                document.getElementById('status').innerText =
+                                    '직선 거리: ' + Math.round(polyline.getLength()) + 'm';
+                            }}, function(err) {{
+                                document.getElementById('status').innerText = '위치 권한을 허용해주세요.';
+                            }}, {{ enableHighAccuracy: true, timeout: 5000 }});
+                        }} else {{
+                            document.getElementById('status').innerText = '이 브라우저는 위치 기능을 지원하지 않습니다.';
+                        }}
                     }});
                 </script>
             </body>
             </html>
             """
-            st.components.v1.html(map_html, height=320)
+            st.components.v1.html(map_html, height=420)
 
         if st.button("닫기"):
             del st.session_state.selected
