@@ -58,22 +58,15 @@
         var params = new URLSearchParams(window.location.search);
         var destLat = parseFloat(params.get('destLat'));
         var destLng = parseFloat(params.get('destLng'));
-        var myLat = params.get('myLat') ? parseFloat(params.get('myLat')) : null;
-        var myLng = params.get('myLng') ? parseFloat(params.get('myLng')) : null;
         var stationName = decodeURIComponent(params.get('station') || '');
         var kakaoKey = params.get('jskey');
         var restKey = params.get('restkey');
 
         document.getElementById('dest-title').innerText = '🚏 ' + stationName;
 
-        // 카카오맵 링크
+        // 카카오맵 링크 (기본: 목적지만)
         var linkEl = document.getElementById('kakao-link');
-        if (myLat) {
-            linkEl.href = 'https://map.kakao.com/link/from/내위치,' + myLat + ',' + myLng +
-                          '/to/' + stationName + ',' + destLat + ',' + destLng;
-        } else {
-            linkEl.href = 'https://map.kakao.com/link/to/' + stationName + ',' + destLat + ',' + destLng;
-        }
+        linkEl.href = 'https://map.kakao.com/link/to/' + stationName + ',' + destLat + ',' + destLng;
 
         // SDK 동적 로드
         var script = document.createElement('script');
@@ -100,32 +93,43 @@
             });
             destInfoW.open(map, destMarker);
 
-            if (!myLat) {
-                document.getElementById('route-info').innerText = '📍 위치 정보 없음 - 페이지를 새로고침하고 위치 권한을 허용해주세요.';
+            // iframe 내에서 직접 위치 가져오기
+            if (!navigator.geolocation) {
+                document.getElementById('route-info').innerText = '이 브라우저는 위치 기능을 지원하지 않습니다.';
                 return;
             }
 
-            // 내 위치 마커
-            var myImg = new kakao.maps.MarkerImage(
-                'https://t1.daumcdn.net/localimg/localimages/07/mapapidoc/markerStar.png',
-                new kakao.maps.Size(24, 35)
-            );
-            var myMarker = new kakao.maps.Marker({
-                position: new kakao.maps.LatLng(myLat, myLng),
-                map: map,
-                image: myImg
-            });
-            var myInfoW = new kakao.maps.InfoWindow({
-                content: '<div style="padding:5px;font-size:13px;color:#e74c3c;font-weight:bold;">📍 내 위치</div>'
-            });
-            myInfoW.open(map, myMarker);
+            document.getElementById('route-info').innerText = '📍 현재 위치를 확인하는 중...';
 
-            // 경로 API 호출
-            fetch('https://apis-navi.kakaomobility.com/v1/directions?origin=' +
-                myLng + ',' + myLat + '&destination=' + destLng + ',' + destLat +
-                '&priority=RECOMMEND', {
-                headers: { 'Authorization': 'KakaoAK ' + restKey }
-            })
+            navigator.geolocation.getCurrentPosition(function(pos) {
+                var myLat = pos.coords.latitude;
+                var myLng = pos.coords.longitude;
+
+                // 카카오맵 링크 업데이트 (출발지 포함)
+                linkEl.href = 'https://map.kakao.com/link/from/내위치,' + myLat + ',' + myLng +
+                              '/to/' + stationName + ',' + destLat + ',' + destLng;
+
+                // 내 위치 마커
+                var myImg = new kakao.maps.MarkerImage(
+                    'https://t1.daumcdn.net/localimg/localimages/07/mapapidoc/markerStar.png',
+                    new kakao.maps.Size(24, 35)
+                );
+                var myMarker = new kakao.maps.Marker({
+                    position: new kakao.maps.LatLng(myLat, myLng),
+                    map: map,
+                    image: myImg
+                });
+                var myInfoW = new kakao.maps.InfoWindow({
+                    content: '<div style="padding:5px;font-size:13px;color:#e74c3c;font-weight:bold;">📍 내 위치</div>'
+                });
+                myInfoW.open(map, myMarker);
+
+                // 경로 API 호출
+                fetch('https://apis-navi.kakaomobility.com/v1/directions?origin=' +
+                    myLng + ',' + myLat + '&destination=' + destLng + ',' + destLat +
+                    '&priority=RECOMMEND', {
+                    headers: { 'Authorization': 'KakaoAK ' + restKey }
+                })
             .then(function(r) { return r.json(); })
             .then(function(data) {
                 if (data.routes && data.routes[0] && data.routes[0].result_code === 0) {
@@ -176,26 +180,29 @@
             })
             .catch(function() { showStraightLine(); });
 
-            function showStraightLine() {
-                var path = [
-                    new kakao.maps.LatLng(myLat, myLng),
-                    new kakao.maps.LatLng(destLat, destLng)
-                ];
-                var pl = new kakao.maps.Polyline({
-                    path: path, strokeWeight: 4,
-                    strokeColor: '#3498db', strokeOpacity: 0.7, strokeStyle: 'dashed'
-                });
-                pl.setMap(map);
-                var dist = Math.round(pl.getLength());
-                var walkMin = Math.ceil(dist / 67);
-                var distText = dist >= 1000 ? (dist/1000).toFixed(1) + 'km' : dist + 'm';
-                document.getElementById('route-info').innerHTML =
-                    '🚶 직선 거리 <b>' + distText + '</b> · 도보 약 <b>' + walkMin + '분</b>';
-                var bounds = new kakao.maps.LatLngBounds();
-                bounds.extend(new kakao.maps.LatLng(myLat, myLng));
-                bounds.extend(new kakao.maps.LatLng(destLat, destLng));
-                map.setBounds(bounds);
-            }
+                function showStraightLine() {
+                    var path = [
+                        new kakao.maps.LatLng(myLat, myLng),
+                        new kakao.maps.LatLng(destLat, destLng)
+                    ];
+                    var pl = new kakao.maps.Polyline({
+                        path: path, strokeWeight: 4,
+                        strokeColor: '#3498db', strokeOpacity: 0.7, strokeStyle: 'dashed'
+                    });
+                    pl.setMap(map);
+                    var dist = Math.round(pl.getLength());
+                    var walkMin = Math.ceil(dist / 67);
+                    var distText = dist >= 1000 ? (dist/1000).toFixed(1) + 'km' : dist + 'm';
+                    document.getElementById('route-info').innerHTML =
+                        '🚶 직선 거리 <b>' + distText + '</b> · 도보 약 <b>' + walkMin + '분</b>';
+                    var bounds = new kakao.maps.LatLngBounds();
+                    bounds.extend(new kakao.maps.LatLng(myLat, myLng));
+                    bounds.extend(new kakao.maps.LatLng(destLat, destLng));
+                    map.setBounds(bounds);
+                }
+            }, function(err) {
+                document.getElementById('route-info').innerText = '📍 위치 권한을 허용해주세요. (주소창 왼쪽 🔒 클릭)';
+            }, { enableHighAccuracy: true, timeout: 10000 });
         }
     </script>
 </body>

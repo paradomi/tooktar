@@ -3,7 +3,6 @@ import os
 
 import requests
 import streamlit as st
-from streamlit_javascript import st_javascript
 
 try:
     from dotenv import load_dotenv
@@ -383,21 +382,6 @@ else:
         unsafe_allow_html=True,
     )
 
-    # 현재 위치 가져오기 (메인 페이지 컨텍스트에서 실행)
-    my_location = st_javascript("""
-    await new Promise((resolve) => {
-        if (!navigator.geolocation) {
-            resolve(null);
-            return;
-        }
-        navigator.geolocation.getCurrentPosition(
-            (pos) => resolve({lat: pos.coords.latitude, lng: pos.coords.longitude}),
-            (err) => resolve(null),
-            {enableHighAccuracy: true, timeout: 5000}
-        );
-    });
-    """)
-
     st.write("---")
     st.markdown("### 어디로 가시나요?")
     st.write("")
@@ -451,11 +435,15 @@ else:
                 "station": station_name,
                 "jskey": KAKAO_JS_KEY,
                 "restkey": KAKAO_REST_KEY or "",
-                "myLat": my_location["lat"] if isinstance(my_location, dict) and my_location.get("lat") else "",
-                "myLng": my_location["lng"] if isinstance(my_location, dict) and my_location.get("lng") else "",
             })
             map_url = f"/app/static/map.html?{map_params}"
-            st.components.v1.iframe(map_url, height=650, scrolling=True)
+            # allow="geolocation" 을 위해 직접 iframe HTML 삽입
+            st.markdown(
+                f'<iframe src="{map_url}" width="100%" height="650" '
+                f'style="border:none;border-radius:15px;" '
+                f'allow="geolocation"></iframe>',
+                unsafe_allow_html=True,
+            )
 
         if st.button("닫기"):
             del st.session_state.selected
