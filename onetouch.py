@@ -167,40 +167,86 @@ if st.session_state.page == "settings":
     with col_icon:
         icon = st.selectbox("아이콘", ICONS)
 
-    # Step 2: 정류장 검색
-    st.markdown("**① 정류장 검색**")
-    keyword = st.text_input("정류장 이름을 입력하세요", placeholder="예: 수원역, 아주대, 신일아파트")
+    # Step 2: 지도에서 정류장 검색
+    st.markdown("**① 지도에서 정류장 찾기**")
 
-    if keyword:
-        if st.button("🔍 검색", key="search_station"):
-            with st.spinner("정류장 검색 중..."):
-                body = api_get("busstationservice", "getBusStationListv2", {"keyword": keyword})
-                if body:
-                    items = body.get("busStationList", [])
-                    if isinstance(items, dict):
-                        items = [items]
-                    st.session_state.search_stations = items
-                else:
-                    st.session_state.search_stations = []
-                for k in ["selected_station", "station_routes"]:
-                    st.session_state.pop(k, None)
+    # 검색창 + 버튼을 한 줄에
+    col_search, col_btn = st.columns([4, 1])
+    with col_search:
+        keyword = st.text_input(
+            "정류장 검색",
+            placeholder="예: 수원역, 아주대, 신일아파트",
+            label_visibility="collapsed",
+        )
+    with col_btn:
+        search_clicked = st.button("🔍", key="search_station", use_container_width=True)
 
+    if keyword and search_clicked:
+        with st.spinner("검색 중..."):
+            body = api_get("busstationservice", "getBusStationListv2", {"keyword": keyword})
+            if body:
+                items = body.get("busStationList", [])
+                if isinstance(items, dict):
+                    items = [items]
+                st.session_state.search_stations = items
+            else:
+                st.session_state.search_stations = []
+            for k in ["selected_station", "station_routes", "map_sel_idx"]:
+                st.session_state.pop(k, None)
+
+    # ── 지도 + 검색 결과 표시 ──
     if "search_stations" in st.session_state:
         stations = st.session_state.search_stations
         if not stations:
             st.warning("검색 결과가 없습니다.")
         else:
+            # 좌표가 유효한 정류장만 필터
+            valid = [
+                s for s in stations
+                if float(s.get("x", 0)) and float(s.get("y", 0))
+            ]
+
+            if valid:
+                lats = [float(s["y"]) for s in valid]
+                lngs = [float(s["x"]) for s in valid]
+                center = [sum(lats) / len(lats), sum(lngs) / len(lngs)]
+
+                m = folium.Map(location=center, zoom_start=14)
+
+                # 검색 결과 마커 표시
+                for s in valid:
+                    sy, sx = float(s["y"]), float(s["x"])
+                    mobile = s.get("mobileNo", "").strip()
+                    label = s.get("stationName", "")
+                    popup_text = f"{label} ({mobile})" if mobile else label
+                    folium.Marker(
+                        [sy, sx],
+                        tooltip=f"🚏 {popup_text}",
+                        popup=popup_text,
+                        icon=folium.Icon(color="blue", icon="bus", prefix="fa"),
+                    ).add_to(m)
+
+                # 여러 결과면 전부 보이게 범위 조절
+                if len(valid) > 1:
+                    m.fit_bounds(
+                        [[min(lats), min(lngs)], [max(lats), max(lngs)]],
+                        padding=[30, 30],
+                    )
+
+                st_folium(m, height=320, use_container_width=True, returned_objects=[])
+
+            # 결과 리스트에서 선택
             station_options = {
-                f"{s.get('stationName', '')} ({s.get('mobileNo', '').strip()})": s
+                f"🚏 {s.get('stationName', '')}  ({s.get('mobileNo', '').strip()})": s
                 for s in stations
             }
             sel_label = st.selectbox(
-                f"검색 결과 ({len(stations)}건)",
+                f"검색 결과 ({len(stations)}건) — 정류장을 선택하세요",
                 list(station_options.keys()),
             )
             sel_station = station_options[sel_label]
 
-            if st.button("이 정류장 선택", key="pick_station"):
+            if st.button("📌 이 정류장 선택", key="pick_station", use_container_width=True):
                 st.session_state.selected_station = sel_station
                 with st.spinner("경유 노선 조회 중..."):
                     body = api_get("busstationservice", "getBusStationViaRouteListv2",
@@ -217,6 +263,19 @@ if st.session_state.page == "settings":
     # Step 3: 노선 선택 & 저장
     if "selected_station" in st.session_state:
         station = st.session_state.selected_station
+
+        # 선택된 정류장을 지도에 표시
+        sy = float(station.get("y", 0))
+        sx = float(station.get("x", 0))
+        if sy and sx:
+            sm = folium.Map(location=[sy, sx], zoom_start=16)
+            folium.Marker(
+                [sy, sx],
+                tooltip=f"🚏 {station.get('stationName', '')}",
+                icon=folium.Icon(color="red", icon="bus", prefix="fa"),
+            ).add_to(sm)
+            st_folium(sm, height=250, use_container_width=True, returned_objects=[])
+
         st.success(f"선택된 정류장: **{station.get('stationName', '')}**")
 
         st.markdown("**② 노선 선택**")
