@@ -1,8 +1,10 @@
 import json
 import os
 
+import folium
 import requests
 import streamlit as st
+from streamlit_folium import st_folium
 
 try:
     from dotenv import load_dotenv
@@ -423,25 +425,28 @@ else:
         else:
             st.error("도착 정보를 가져올 수 없습니다.")
 
-        # 카카오맵 + 앱 내 길안내 (정적 파일로 서빙)
+        # 지도 표시 (folium)
         loc_x = loc.get("x", 0)
         loc_y = loc.get("y", 0)
-        if loc_x and loc_y and KAKAO_JS_KEY:
-            import urllib.parse
+        if loc_x and loc_y:
             station_name = loc.get("stationName", "")
-            map_params = urllib.parse.urlencode({
-                "destLat": loc_y,
-                "destLng": loc_x,
-                "station": station_name,
-                "jskey": KAKAO_JS_KEY,
-                "restkey": KAKAO_REST_KEY or "",
-            })
-            map_url = f"/app/static/map.html?{map_params}"
-            # allow="geolocation" 을 위해 직접 iframe HTML 삽입
+            m = folium.Map(location=[loc_y, loc_x], zoom_start=16)
+            folium.Marker(
+                [loc_y, loc_x],
+                popup=station_name,
+                tooltip=f"🚏 {station_name}",
+                icon=folium.Icon(color="blue", icon="bus", prefix="fa"),
+            ).add_to(m)
+            st_folium(m, height=350, use_container_width=True)
+
+            # 카카오맵 길안내 링크
+            kakao_url = f"https://map.kakao.com/link/to/{station_name},{loc_y},{loc_x}"
             st.markdown(
-                f'<iframe src="{map_url}" width="100%" height="650" '
-                f'style="border:none;border-radius:15px;" '
-                f'allow="geolocation"></iframe>',
+                f'<a href="{kakao_url}" target="_blank" style="'
+                f'display:block;text-align:center;padding:14px;margin-top:8px;'
+                f'background:#FEE500;color:#3C1E1E;border-radius:12px;'
+                f'text-decoration:none;font-weight:bold;font-size:18px;">'
+                f'🗺️ 카카오맵 길안내</a>',
                 unsafe_allow_html=True,
             )
 
