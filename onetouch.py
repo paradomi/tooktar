@@ -167,211 +167,98 @@ if st.session_state.page == "settings":
     with col_icon:
         icon = st.selectbox("아이콘", ICONS)
 
-    # Step 2: 카카오맵 장소 검색
-    st.markdown("**① 장소 검색**")
-    keyword = st.text_input("장소를 검색하세요", placeholder="예: 수원역, 아주대학교, 이마트 수원점")
+    # Step 2: 정류장 검색
+    st.markdown("**① 정류장 검색**")
+    keyword = st.text_input("정류장 이름을 입력하세요", placeholder="예: 수원역, 아주대, 신일아파트")
 
     if keyword:
-        if st.button("🔍 검색", key="search_place"):
-            with st.spinner("장소 검색 중..."):
-                st.session_state.kakao_results = kakao_search(keyword)
-                for key in ["selected_place", "nearby_routes", "selected_nearby"]:
-                    st.session_state.pop(key, None)
+        if st.button("🔍 검색", key="search_station"):
+            with st.spinner("정류장 검색 중..."):
+                body = api_get("busstationservice", "getBusStationListv2", {"keyword": keyword})
+                if body:
+                    items = body.get("busStationList", [])
+                    if isinstance(items, dict):
+                        items = [items]
+                    st.session_state.search_stations = items
+                else:
+                    st.session_state.search_stations = []
+                for k in ["selected_station", "station_routes"]:
+                    st.session_state.pop(k, None)
 
-    if "kakao_results" in st.session_state and st.session_state.kakao_results:
-        places = st.session_state.kakao_results
-        place_options = {
-            f"{p.get('place_name', '')} — {p.get('address_name', '')}": p
-            for p in places
-        }
-        selected_place_label = st.selectbox(
-            f"검색 결과 ({len(places)}건)",
-            list(place_options.keys()),
-        )
-        selected_place = place_options[selected_place_label]
-
-        if st.button("이 장소 선택", key="select_place"):
-            st.session_state.selected_place = selected_place
-            # 주변 버스 정류장 검색 (경기 버스 API로 조회)
-            with st.spinner("주변 정류장 및 노선 조회 중..."):
-                px = float(selected_place["x"])
-                py = float(selected_place["y"])
-                # 버스도착정보 목록으로 주변 정류장 찾기 — 카카오 카테고리 검색 사용
-                url = "https://dapi.kakao.com/v2/local/search/keyword.json"
-                headers = {"Authorization": f"KakaoAK {KAKAO_REST_KEY}"}
-                r = requests.get(url, headers=headers, params={
-                    "query": "버스정류장",
-                    "x": px, "y": py,
-                    "radius": 500,
-                    "sort": "distance",
-                    "size": 5,
-                }, timeout=5)
-                kakao_stations = r.json().get("documents", [])
-
-                # 카카오 정류장 이름으로 GBIS에서 노선 검색
-                nearby_list = []
-                seen_stations = set()
-                for ks in kakao_stations:
-                    station_name = ks.get("place_name", "").replace("버스정류장", "").replace("정류장", "").strip()
-                    if not station_name or station_name in seen_stations:
-                        continue
-                    seen_stations.add(station_name)
-                    # GBIS 정류소 검색 시도
-                    body = api_get("busstationservice", "getBusStationListv2", {"keyword": station_name})
-                    if not body:
-                        continue
-                    stations = body.get("busStationList", [])
-                    if isinstance(stations, dict):
-                        stations = [stations]
-                    # 가장 가까운 정류장 찾기
-                    for s in stations:
-                        sx, sy = float(s.get("x", 0)), float(s.get("y", 0))
-                        dist = ((sx - px) ** 2 + (sy - py) ** 2) ** 0.5
-                        if dist < 0.006:  # 약 500m 이내
-                            nearby_list.append({
-                                "stationId": s["stationId"],
-                                "stationName": s.get("stationName", ""),
-                                "x": sx,
-                                "y": sy,
-                                "distance": ks.get("distance", ""),
-                            })
-
-                # 중복 제거
-                unique = {}
-                for s in nearby_list:
-                    unique[s["stationId"]] = s
-                st.session_state.nearby_stations = list(unique.values())
-            st.rerun()
-
-    # Step 3: 주변 정류장 선택 → 노선 선택
-    if "selected_place" in st.session_state:
-        place = st.session_state.selected_place
-        st.success(f"선택된 장소: **{place.get('place_name', '')}**")
-
-        st.markdown("**② 주변 정류장 선택**")
-        nearby = st.session_state.get("nearby_stations", [])
-        if not nearby:
-            st.warning("주변 500m 이내 정류장을 찾을 수 없습니다.")
-            st.markdown("**버스 번호로 직접 검색**")
-            route_keyword = st.text_input("버스 번호 입력", placeholder="예: 13, 720")
-            if route_keyword and st.button("🔍 노선 검색", key="fallback_route"):
-                with st.spinner("노선 검색 중..."):
-                    st.session_state.fallback_routes = search_routes(route_keyword)
-                    st.rerun()
-            if "fallback_routes" in st.session_state and st.session_state.fallback_routes:
-                fb_routes = st.session_state.fallback_routes
-                fb_options = {f"{r.get('routeName', '')}번 ({r.get('regionName', '')})": r for r in fb_routes}
-                fb_label = st.selectbox("노선 선택", list(fb_options.keys()))
-                fb_route = fb_options[fb_label]
-                if st.button("이 노선 선택", key="fb_select"):
-                    st.session_state.fallback_selected_route = fb_route
-                    with st.spinner("정류장 목록 조회 중..."):
-                        st.session_state.fallback_stations = get_route_stations(fb_route["routeId"])
-                    st.rerun()
-                if "fallback_stations" in st.session_state:
-                    fb_sts = st.session_state.fallback_stations
-                    fb_st_options = {
-                        f"{s.get('stationSeq', '')}. {s.get('stationName', '')} ({s.get('regionName', '')})": s
-                        for s in fb_sts
-                    }
-                    fb_st_label = st.selectbox("정류장 선택", list(fb_st_options.keys()))
-                    fb_station = fb_st_options[fb_st_label]
-                    fb_route = st.session_state.fallback_selected_route
-                    if st.button("✅ 이 장소 저장", use_container_width=True, key="fb_save"):
-                        if not name:
-                            st.error("장소 이름을 입력해주세요.")
-                        else:
-                            locations.append({
-                                "name": name,
-                                "icon": icon,
-                                "stationId": str(fb_station["stationId"]),
-                                "stationName": fb_station.get("stationName", ""),
-                                "routeId": str(fb_route["routeId"]),
-                                "routeName": str(fb_route.get("routeName", "")),
-                                "staOrder": fb_station.get("stationSeq", 1),
-                                "x": fb_station.get("x", 0),
-                                "y": fb_station.get("y", 0),
-                            })
-                            save_locations(locations)
-                            for key in ["kakao_results", "selected_place", "nearby_stations",
-                                        "fallback_routes", "fallback_selected_route", "fallback_stations"]:
-                                st.session_state.pop(key, None)
-                            st.success(f"'{name}' 장소가 추가되었습니다!")
-                            st.rerun()
+    if "search_stations" in st.session_state:
+        stations = st.session_state.search_stations
+        if not stations:
+            st.warning("검색 결과가 없습니다.")
         else:
             station_options = {
-                f"{s.get('stationName', '')} ({s.get('distance', '')}m)": s
-                for s in nearby
+                f"{s.get('stationName', '')} ({s.get('mobileNo', '').strip()})": s
+                for s in stations
             }
-            selected_station_label = st.selectbox(
-                f"주변 정류장 ({len(nearby)}개)",
+            sel_label = st.selectbox(
+                f"검색 결과 ({len(stations)}건)",
                 list(station_options.keys()),
             )
-            selected_station = station_options[selected_station_label]
+            sel_station = station_options[sel_label]
 
-            if st.button("이 정류장 선택", key="select_nearby"):
-                st.session_state.selected_nearby = selected_station
-                # 이 정류장의 경유 노선 조회
+            if st.button("이 정류장 선택", key="pick_station"):
+                st.session_state.selected_station = sel_station
                 with st.spinner("경유 노선 조회 중..."):
                     body = api_get("busstationservice", "getBusStationViaRouteListv2",
-                                   {"stationId": selected_station["stationId"]})
+                                   {"stationId": sel_station["stationId"]})
                     if body:
                         routes = body.get("busRouteList", [])
                         if isinstance(routes, dict):
                             routes = [routes]
-                        st.session_state.nearby_routes = routes
+                        st.session_state.station_routes = routes
                     else:
-                        st.session_state.nearby_routes = []
+                        st.session_state.station_routes = []
                 st.rerun()
 
-        # Step 4: 노선 선택 및 저장
-        if "selected_nearby" in st.session_state:
-            station = st.session_state.selected_nearby
-            st.info(f"선택된 정류장: **{station.get('stationName', '')}**")
+    # Step 3: 노선 선택 & 저장
+    if "selected_station" in st.session_state:
+        station = st.session_state.selected_station
+        st.success(f"선택된 정류장: **{station.get('stationName', '')}**")
 
-            st.markdown("**③ 노선 선택**")
-            routes = st.session_state.get("nearby_routes", [])
-            if not routes:
-                st.warning("이 정류장의 노선 정보를 가져올 수 없습니다.")
-            else:
-                route_options = {
-                    f"{r.get('routeName', '')}번 ({r.get('regionName', '')})": r
-                    for r in routes
-                }
-                selected_route_label = st.selectbox(
-                    f"경유 노선 ({len(routes)}건)",
-                    list(route_options.keys()),
-                )
-                selected_route = route_options[selected_route_label]
+        st.markdown("**② 노선 선택**")
+        routes = st.session_state.get("station_routes", [])
+        if not routes:
+            st.warning("이 정류장의 노선 정보를 가져올 수 없습니다.")
+        else:
+            route_options = {
+                f"{r.get('routeName', '')}번 ({r.get('regionName', '')})": r
+                for r in routes
+            }
+            sel_route_label = st.selectbox(
+                f"경유 노선 ({len(routes)}건)",
+                list(route_options.keys()),
+            )
+            sel_route = route_options[sel_route_label]
 
-                if st.button("✅ 이 장소 저장", use_container_width=True):
-                    if not name:
-                        st.error("장소 이름을 입력해주세요.")
-                    else:
-                        locations.append({
-                            "name": name,
-                            "icon": icon,
-                            "stationId": str(station["stationId"]),
-                            "stationName": station.get("stationName", ""),
-                            "routeId": str(selected_route["routeId"]),
-                            "routeName": str(selected_route.get("routeName", "")),
-                            "staOrder": selected_route.get("staOrder", 1),
-                            "x": station.get("x", 0),
-                            "y": station.get("y", 0),
-                        })
-                        save_locations(locations)
-                        for key in ["kakao_results", "selected_place", "nearby_stations",
-                                    "selected_nearby", "nearby_routes"]:
-                            st.session_state.pop(key, None)
-                        st.success(f"'{name}' 장소가 추가되었습니다!")
-                        st.rerun()
+            if st.button("✅ 이 장소 저장", use_container_width=True):
+                if not name:
+                    st.error("장소 이름을 입력해주세요.")
+                else:
+                    locations.append({
+                        "name": name,
+                        "icon": icon,
+                        "stationId": str(station["stationId"]),
+                        "stationName": station.get("stationName", ""),
+                        "routeId": str(sel_route["routeId"]),
+                        "routeName": str(sel_route.get("routeName", "")),
+                        "staOrder": sel_route.get("staOrder", 1),
+                        "x": station.get("x", 0),
+                        "y": station.get("y", 0),
+                    })
+                    save_locations(locations)
+                    for k in ["search_stations", "selected_station", "station_routes"]:
+                        st.session_state.pop(k, None)
+                    st.success(f"'{name}' 장소가 추가되었습니다!")
+                    st.rerun()
 
     st.write("---")
     if st.button("← 메인으로 돌아가기", use_container_width=True):
-        for key in ["kakao_results", "selected_place", "nearby_stations",
-                    "selected_nearby", "nearby_routes",
-                    "fallback_routes", "fallback_selected_route", "fallback_stations"]:
-            st.session_state.pop(key, None)
+        for k in ["search_stations", "selected_station", "station_routes"]:
+            st.session_state.pop(k, None)
         st.session_state.page = "main"
         st.rerun()
 
