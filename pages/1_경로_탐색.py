@@ -28,7 +28,7 @@ st.write("")
 # 정렬 옵션
 sort_option = st.radio(
     "정렬",
-    ["배리어프리 우선", "최단 시간", "최소 환승"],
+    ["휠체어 우선", "최단 시간", "최소 환승"],
     horizontal=True,
     label_visibility="collapsed",
 )
@@ -36,7 +36,7 @@ sort_option = st.radio(
 st.write("")
 
 # 정렬 적용
-if sort_option == "배리어프리 우선":
+if sort_option == "휠체어 우선":
     routes = sorted(ROUTE_RESULTS, key=lambda r: -r["barrier_free_score"])
 elif sort_option == "최단 시간":
     routes = sorted(ROUTE_RESULTS, key=lambda r: r["total_minutes"])
