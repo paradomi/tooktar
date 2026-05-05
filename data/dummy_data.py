@@ -61,9 +61,26 @@ AI_BRIEFING = """이 경로는 **전 구간 엘리베이터 이용이 가능**�
 도착지 인근에는 장애인 화장실이 이용 가능합니다."""
 
 ROUTE_STEPS = [
-    {"step": 1, "type": "walk", "desc": "출발지에서 A 정류장까지 도보 3분", "barrier_free": True},
-    {"step": 2, "type": "bus", "desc": "143번 저상버스 탑승 (15분)", "barrier_free": True},
-    {"step": 3, "type": "transfer", "desc": "B역 환승 - 엘리베이터 이용", "barrier_free": True},
-    {"step": 4, "type": "subway", "desc": "지하철 1호선 (8분)", "barrier_free": True},
-    {"step": 5, "type": "walk", "desc": "도착지까지 도보 2분", "barrier_free": True},
+    {"step": 1, "type": "walk", "desc": "출발지에서 A 정류장까지 도보 3분", "barrier_free": True,
+     "lat": 37.2636, "lng": 127.0286},
+    {"step": 2, "type": "bus", "desc": "143번 저상버스 탑승 (15분)", "barrier_free": True,
+     "lat": 37.2650, "lng": 127.0320},
+    {"step": 3, "type": "transfer", "desc": "B역 환승 - 엘리베이터 이용", "barrier_free": True,
+     "lat": 37.2700, "lng": 127.0450},
+    {"step": 4, "type": "subway", "desc": "지하철 1호선 (8분)", "barrier_free": True,
+     "lat": 37.2750, "lng": 127.0500},
+    {"step": 5, "type": "walk", "desc": "도착지까지 도보 2분", "barrier_free": True,
+     "lat": 37.2790, "lng": 127.0435},
+]
+
+ROUTE_PATH = [
+    {"lat": 37.2636, "lng": 127.0286},
+    {"lat": 37.2642, "lng": 127.0300},
+    {"lat": 37.2650, "lng": 127.0320},
+    {"lat": 37.2665, "lng": 127.0370},
+    {"lat": 37.2700, "lng": 127.0450},
+    {"lat": 37.2720, "lng": 127.0480},
+    {"lat": 37.2750, "lng": 127.0500},
+    {"lat": 37.2770, "lng": 127.0470},
+    {"lat": 37.2790, "lng": 127.0435},
 ]
