@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html><head>
+<meta charset="utf-8">
+<script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=a3f4668a3bb3a2a1510f37a1fab5a398&autoload=false"></script>
+<style>
+  * { margin: 0; padding: 0; }
+  #map { width: 100%; height: 450px; border-radius: 16px; }
+</style>
+</head><body>
+<div id="map"></div>
+<script>
+kakao.maps.load(function() {
+  var container = document.getElementById('map');
+  var map = new kakao.maps.Map(container, {
+    center: new kakao.maps.LatLng(37.252839749189626, 127.05009703970816),
+    level: 5
+  });
+
+  var bounds = new kakao.maps.LatLngBounds();
+
+  var sections = [{"coords": [{"lat": 37.261852, "lng": 127.03112}, {"lat": 37.261703, "lng": 127.031674}, {"lat": 37.261564, "lng": 127.032228}, {"lat": 37.261225, "lng": 127.033755}, {"lat": 37.26111, "lng": 127.034061}, {"lat": 37.260986, "lng": 127.034389}, {"lat": 37.26088, "lng": 127.034605}, {"lat": 37.260738, "lng": 127.034832}, {"lat": 37.260568, "lng": 127.035059}, {"lat": 37.260372, "lng": 127.035265}, {"lat": 37.260184, "lng": 127.035436}, {"lat": 37.259969, "lng": 127.035597}, {"lat": 37.259772, "lng": 127.035735}, {"lat": 37.259467, "lng": 127.035874}, {"lat": 37.259143, "lng": 127.035968}, {"lat": 37.258972, "lng": 127.036004}, {"lat": 37.258441, "lng": 127.036079}, {"lat": 37.257865, "lng": 127.036187}, {"lat": 37.257506, "lng": 127.036271}, {"lat": 37.257236, "lng": 127.036376}, {"lat": 37.257021, "lng": 127.03648}, {"lat": 37.256788, "lng": 127.03663}, {"lat": 37.256564, "lng": 127.03679}, {"lat": 37.256287, "lng": 127.037087}, {"lat": 37.256001, "lng": 127.03744}, {"lat": 37.255698, "lng": 127.037895}, {"lat": 37.255592, "lng": 127.038076}, {"lat": 37.255227, "lng": 127.03869}, {"lat": 37.254995, "lng": 127.038986}, {"lat": 37.254754, "lng": 127.039248}, {"lat": 37.254352, "lng": 127.039591}, {"lat": 37.25376, "lng": 127.039948}, {"lat": 37.253374, "lng": 127.040179}, {"lat": 37.252702, "lng": 127.040661}, {"lat": 37.252702, "lng": 127.040661}, {"lat": 37.252362, "lng": 127.040902}, {"lat": 37.252174, "lng": 127.041051}, {"lat": 37.252048, "lng": 127.041154}, {"lat": 37.251896, "lng": 127.041291}, {"lat": 37.2517, "lng": 127.041474}, {"lat": 37.251575, "lng": 127.041611}, {"lat": 37.251342, "lng": 127.04185}, {"lat": 37.250959, "lng": 127.04234}, {"lat": 37.248502, "lng": 127.046079}, {"lat": 37.246125, "lng": 127.049739}, {"lat": 37.245974, "lng": 127.050011}, {"lat": 37.245815, "lng": 127.050385}, {"lat": 37.245674, "lng": 127.050815}, {"lat": 37.245587, "lng": 127.051211}, {"lat": 37.245536, "lng": 127.051572}, {"lat": 37.245513, "lng": 127.051989}, {"lat": 37.245754, "lng": 127.056236}, {"lat": 37.245766, "lng": 127.056653}, {"lat": 37.245808, "lng": 127.057373}, {"lat": 37.245808, "lng": 127.057373}, {"lat": 37.245841, "lng": 127.058117}, {"lat": 37.245853, "lng": 127.058489}, {"lat": 37.245863, "lng": 127.058601}, {"lat": 37.245797, "lng": 127.059391}, {"lat": 37.245758, "lng": 127.060136}, {"lat": 37.245743, "lng": 127.060519}, {"lat": 37.245738, "lng": 127.061105}, {"lat": 37.245752, "lng": 127.06177}, {"lat": 37.245792, "lng": 127.063336}, {"lat": 37.245867, "lng": 127.064823}, {"lat": 37.245951, "lng": 127.065239}, {"lat": 37.246071, "lng": 127.065643}, {"lat": 37.246255, "lng": 127.066069}, {"lat": 37.246465, "lng": 127.06645}, {"lat": 37.246638, "lng": 127.066696}, {"lat": 37.246848, "lng": 127.066964}, {"lat": 37.249154, "lng": 127.069134}, {"lat": 37.24958, "lng": 127.069534}, {"lat": 37.249952, "lng": 127.069879}, {"lat": 37.250769, "lng": 127.070635}, {"lat": 37.25106, "lng": 127.070902}, {"lat": 37.251523, "lng": 127.071336}, {"lat": 37.251523, "lng": 127.071336}, {"lat": 37.251868, "lng": 127.071659}, {"lat": 37.252213, "lng": 127.071982}, {"lat": 37.252603, "lng": 127.07236}, {"lat": 37.255109, "lng": 127.074776}, {"lat": 37.258759, "lng": 127.078271}, {"lat": 37.259113, "lng": 127.078616}, {"lat": 37.259476, "lng": 127.078961}], "color": "#1f77b4"}];
+  sections.forEach(function(sec) {
+    var path = sec.coords.map(function(c) {
+      var ll = new kakao.maps.LatLng(c.lat, c.lng);
+      bounds.extend(ll);
+      return ll;
+    });
+    new kakao.maps.Polyline({
+      map: map, path: path,
+      strokeWeight: 6, strokeColor: sec.color,
+      strokeOpacity: 0.85, strokeStyle: 'solid'
+    });
+  });
+
+  var walks = [];
+  walks.forEach(function(w) {
+    var path = w.coords.map(function(c) {
+      var ll = new kakao.maps.LatLng(c.lat, c.lng);
+      bounds.extend(ll);
+      return ll;
+    });
+    new kakao.maps.Polyline({
+      map: map, path: path,
+      strokeWeight: 4, strokeColor: w.color,
+      strokeOpacity: 0.7, strokeStyle: 'shortdashdot'
+    });
+  });
+
+  var startPos = new kakao.maps.LatLng(37.263584678785, 127.028715898311);
+  bounds.extend(startPos);
+  new kakao.maps.InfoWindow({
+    content: '<div style="padding:4px 8px;font-size:12px;font-weight:bold;color:#1565c0;">\ud83d\udea9 수원시청</div>'
+  }).open(map, new kakao.maps.Marker({ map: map, position: startPos }));
+
+  var endPos = new kakao.maps.LatLng(37.26325150071228, 127.07101155629842);
+  bounds.extend(endPos);
+  new kakao.maps.InfoWindow({
+    content: '<div style="padding:4px 8px;font-size:12px;font-weight:bold;color:#c62828;">\ud83d\udccd 영흥수목원</div>'
+  }).open(map, new kakao.maps.Marker({ map: map, position: endPos }));
+
+  map.setBounds(bounds, 80);
+});
+</script>
+</body></html>
