@@ -1,8 +1,8 @@
-"""경로 상세 화면 - ODsay mapObj 기반 실제 경로 + 카카오맵 + 교통약자 정보"""
+"""경로 상세 화면 - ODsay mapObj 기반 실제 경로 + folium 지도 + 교통약자 정보"""
 
-import json
 import streamlit as st
 import streamlit.components.v1 as components
+import folium
 import sys, os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -30,8 +30,6 @@ if st.button("← 경로 목록", key="back_routes"):
 
 render_header()
 
-KAKAO_JS_KEY = os.getenv("KAKAO_JS_KEY", "")
-
 # ─── 선택된 경로 가져오기 ───
 route_id = st.session_state.get("selected_route_id", 1)
 odsay_routes = st.session_state.get("odsay_routes", [])
@@ -58,7 +56,7 @@ if map_obj:
         if lane_data:
             st.session_state[cache_key] = lane_data
 
-# ─── 2. 카카오맵에 폴리라인 렌더링 ───
+# ─── 2. folium 지도에 폴리라인 렌더링 ───
 lane_sections = []
 if lane_data and "lane" in lane_data:
     for lane in lane_data["lane"]:
@@ -70,7 +68,7 @@ if lane_data and "lane" in lane_data:
             if isinstance(graph_pos, list):
                 for pt in graph_pos:
                     try:
-                        coords.append({"lat": float(pt["y"]), "lng": float(pt["x"])})
+                        coords.append([float(pt["y"]), float(pt["x"])])
                     except (KeyError, ValueError, TypeError):
                         pass
             elif isinstance(graph_pos, str) and graph_pos:
@@ -78,7 +76,7 @@ if lane_data and "lane" in lane_data:
                     parts = pt.split(",")
                     if len(parts) == 2:
                         try:
-                            coords.append({"lat": float(parts[1]), "lng": float(parts[0])})
+                            coords.append([float(parts[1]), float(parts[0])])
                         except ValueError:
                             pass
             if coords:
@@ -90,24 +88,33 @@ if lane_data and "lane" in lane_data:
                     color = "#999999"
                 lane_sections.append({"coords": coords, "color": color})
 
+# 도보 구간 (subPath의 start/end 좌표로 직선 표시)
+walk_lines = []
+for step in steps:
+    if step["type"] == "walk":
+        sx, sy = step.get("start_x"), step.get("start_y")
+        ex, ey = step.get("end_x"), step.get("end_y")
+        if sx and sy and ex and ey:
+            walk_lines.append([[float(sy), float(sx)], [float(ey), float(ex)]])
+
 origin_coord = st.session_state.get("origin_coord", {})
 dest_coord = st.session_state.get("dest_coord", {})
 
-all_coords = []
+all_points = []
 for sec in lane_sections:
-    all_coords.extend(sec["coords"])
+    all_points.extend(sec["coords"])
+for wl in walk_lines:
+    all_points.extend(wl)
 if origin_coord:
-    all_coords.append({"lat": origin_coord.get("lat", 0), "lng": origin_coord.get("lng", 0)})
+    all_points.append([origin_coord.get("lat", 0), origin_coord.get("lng", 0)])
 if dest_coord:
-    all_coords.append({"lat": dest_coord.get("lat", 0), "lng": dest_coord.get("lng", 0)})
+    all_points.append([dest_coord.get("lat", 0), dest_coord.get("lng", 0)])
 
-if not all_coords:
-    all_coords = [{"lat": 37.27, "lng": 127.03}]
+if not all_points:
+    all_points = [[37.27, 127.03]]
 
-center_lat = sum(c["lat"] for c in all_coords) / len(all_coords)
-center_lng = sum(c["lng"] for c in all_coords) / len(all_coords)
-
-sections_json = json.dumps(lane_sections, ensure_ascii=False)
+center_lat = sum(p[0] for p in all_points) / len(all_points)
+center_lng = sum(p[1] for p in all_points) / len(all_points)
 
 origin_name = origin_coord.get("name", "출발") if origin_coord else "출발"
 dest_name = dest_coord.get("name", "도착") if dest_coord else "도착"
@@ -116,72 +123,50 @@ origin_lng = origin_coord.get("lng", center_lng)
 dest_lat = dest_coord.get("lat", center_lat)
 dest_lng = dest_coord.get("lng", center_lng)
 
-kakao_map_html = f"""
-<!DOCTYPE html>
-<html><head>
-<meta charset="utf-8">
-<script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey={KAKAO_JS_KEY}&autoload=false"></script>
-<style>
-  body {{ margin: 0; padding: 0; }}
-  #map {{ width: 100%; height: 400px; border-radius: 16px; }}
-</style>
-</head><body>
-<div id="map"></div>
-<script>
-kakao.maps.load(function() {{
-var container = document.getElementById('map');
-var map = new kakao.maps.Map(container, {{
-    center: new kakao.maps.LatLng({center_lat}, {center_lng}),
-    level: 5
-}});
+m = folium.Map(location=[center_lat, center_lng], zoom_start=14, tiles="OpenStreetMap")
 
-var bounds = new kakao.maps.LatLngBounds();
+for sec in lane_sections:
+    folium.PolyLine(
+        locations=sec["coords"],
+        color=sec["color"],
+        weight=6,
+        opacity=0.85,
+    ).add_to(m)
 
-var sections = {sections_json};
-sections.forEach(function(sec) {{
-    var path = sec.coords.map(function(c) {{
-        var ll = new kakao.maps.LatLng(c.lat, c.lng);
-        bounds.extend(ll);
-        return ll;
-    }});
-    new kakao.maps.Polyline({{
-        map: map,
-        path: path,
-        strokeWeight: 6,
-        strokeColor: sec.color,
-        strokeOpacity: 0.85,
-        strokeStyle: 'solid'
-    }});
-}});
+for wl in walk_lines:
+    folium.PolyLine(
+        locations=wl,
+        color="#FF8C00",
+        weight=4,
+        opacity=0.7,
+        dash_array="10 6",
+    ).add_to(m)
 
-var startPos = new kakao.maps.LatLng({origin_lat}, {origin_lng});
-bounds.extend(startPos);
-var startMarker = new kakao.maps.Marker({{ map: map, position: startPos }});
-var startInfo = new kakao.maps.InfoWindow({{
-    content: '<div style="padding:4px 8px;font-size:12px;font-weight:bold;color:#1565c0;">🚩 {origin_name}</div>'
-}});
-startInfo.open(map, startMarker);
+folium.Marker(
+    location=[origin_lat, origin_lng],
+    popup=origin_name,
+    icon=folium.Icon(color="blue", icon="play", prefix="fa"),
+    tooltip=f"🚩 {origin_name}",
+).add_to(m)
 
-var endPos = new kakao.maps.LatLng({dest_lat}, {dest_lng});
-bounds.extend(endPos);
-var endMarker = new kakao.maps.Marker({{ map: map, position: endPos }});
-var endInfo = new kakao.maps.InfoWindow({{
-    content: '<div style="padding:4px 8px;font-size:12px;font-weight:bold;color:#c62828;">📍 {dest_name}</div>'
-}});
-endInfo.open(map, endMarker);
+folium.Marker(
+    location=[dest_lat, dest_lng],
+    popup=dest_name,
+    icon=folium.Icon(color="red", icon="flag", prefix="fa"),
+    tooltip=f"📍 {dest_name}",
+).add_to(m)
 
-map.setBounds(bounds, 80);
-}});
-</script>
-</body></html>
-"""
+if all_points:
+    m.fit_bounds(all_points, padding=[30, 30])
 
-components.html(kakao_map_html, height=420)
+map_html = m._repr_html_()
+components.html(map_html, height=450)
 
 st.markdown("""
 <div style="display:flex;gap:16px;justify-content:center;font-size:13px;margin-top:-8px;margin-bottom:12px;">
     <span>🟦 <b>버스</b></span>
     <span>🟩 <b>지하철</b></span>
+    <span>🟧 <b>도보</b></span>
 </div>
 """, unsafe_allow_html=True)
 
@@ -204,7 +189,7 @@ for step in steps:
         border_color = "#999"
 
     st.markdown(
-        f'<div style="padding:12px 16px;background:#f8f9fa;border-left:5px solid {border_color};margin-bottom:4px;border-radius:8px;font-size:{fs_body}px;">'
+        f'<div style="padding:12px 16px;background:#f8f9fa;border-left:5px solid {border_color};margin-bottom:4px;border-radius:8px;font-size:{fs_body}px;color:#333;">'
         f'{icon} {step["desc"]}  {bf_mark}'
         f'</div>',
         unsafe_allow_html=True,
