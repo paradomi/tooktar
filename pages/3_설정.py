@@ -32,21 +32,3 @@ selected = st.radio(
 if selected != current:
     st.session_state["font_size_level"] = selected
     st.rerun()
-
-st.write("---")
-
-# ─── 저상버스 표시 설정 ───
-st.markdown("### ♿ 저상버스 표시")
-
-if "show_low_floor" not in st.session_state:
-    st.session_state["show_low_floor"] = True
-
-low_floor_on = st.toggle(
-    "경로 안내에서 저상버스 도착 정보 표시",
-    value=st.session_state["show_low_floor"],
-    key="low_floor_toggle",
-)
-
-if low_floor_on != st.session_state["show_low_floor"]:
-    st.session_state["show_low_floor"] = low_floor_on
-    st.rerun()

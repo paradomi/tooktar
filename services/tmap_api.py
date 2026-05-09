@@ -4,7 +4,7 @@ import os
 import requests
 
 
-def pedestrian_route(start_x, start_y, end_x, end_y, start_name="출발", end_name="도착"):
+def pedestrian_route(start_x, start_y, end_x, end_y, start_name="출발", end_name="도착", search_option=0):
     """Tmap 보행자 경로 API 호출.
 
     Returns:
@@ -28,6 +28,7 @@ def pedestrian_route(start_x, start_y, end_x, end_y, start_name="출발", end_na
         "resCoordType": "WGS84GEO",
         "startName": "start",
         "endName": "end",
+        "searchOption": str(search_option),
     }
 
     try:

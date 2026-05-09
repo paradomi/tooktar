@@ -13,11 +13,21 @@ from components.styles import apply_global_styles, FONT_SIZE_PRESETS
 from components.header import render_header
 from services.odsay_api import load_lane
 from services.tmap_api import pedestrian_route
-from data.dummy_data import ACCESSIBILITY_INFO, AI_BRIEFING
+from services.kakao_local import get_subway_kakao_url
+from data.dummy_data import AI_BRIEFING
 
 st.set_page_config(page_title="경로 상세", page_icon="🗺️", layout="centered")
 
 apply_global_styles()
+
+st.markdown("""
+<style>
+[data-testid="stMain"] [data-testid="stTabs"] button[role="tab"] p {
+    font-size: 1.6rem;
+    font-weight: 600;
+}
+</style>
+""", unsafe_allow_html=True)
 
 level = st.session_state.get("font_size_level", "보통")
 f = FONT_SIZE_PRESETS.get(level, FONT_SIZE_PRESETS["보통"])
@@ -45,7 +55,22 @@ if not selected:
 steps = selected.get("steps", [])
 map_obj = selected.get("map_obj", "")
 
+_route_mode = st.session_state.get("route_mode", "fast")
+_search_option = 4 if _route_mode == "wheel" else 0
+_walk_color = "#7B1FA2" if _route_mode == "wheel" else "#FF8C00"
+
 # ─── 1. ODsay loadLane으로 폴리라인 데이터 획득 ───
+if _route_mode == "wheel":
+    st.markdown(
+        '<div style="background:#f3e5f5;border-left:4px solid #7B1FA2;'
+        'padding:12px 16px;border-radius:10px;margin-bottom:14px;">'
+        '<div style="color:#4A148C;font-weight:700;font-size:15px;margin-bottom:4px;">'
+        '♿ 휠체어 맞춤 경로</div>'
+        '<div style="color:#555;font-size:13px;">'
+        '계단을 제외한 도보 경로로 안내합니다 (지도의 보라색 점선)'
+        '</div></div>',
+        unsafe_allow_html=True,
+    )
 st.markdown("### 🗺️ 경로 지도")
 
 lane_data = None
@@ -120,13 +145,14 @@ for idx, step in enumerate(steps):
             ex, ey = dest_coord.get("lng"), dest_coord.get("lat")
     if not (sx and sy and ex and ey):
         continue
-    cache_key = f"tmap_walk_{sx}_{sy}_{ex}_{ey}"
+    cache_key = f"tmap_walk_{sx}_{sy}_{ex}_{ey}_opt{_search_option}"
     tmap_coords = st.session_state.get(cache_key)
     if not tmap_coords:
         tmap_coords = pedestrian_route(
             sx, sy, ex, ey,
             start_name=step.get("start_name", "출발"),
             end_name=step.get("end_name", "도착"),
+            search_option=_search_option,
         )
         if tmap_coords:
             st.session_state[cache_key] = tmap_coords
@@ -137,7 +163,7 @@ for idx, step in enumerate(steps):
             {"lat": float(sy), "lng": float(sx)},
             {"lat": float(ey), "lng": float(ex)},
         ]
-    walk_lines.append({"coords": coords, "color": "#FF8C00"})
+    walk_lines.append({"coords": coords, "color": _walk_color})
 
 all_coords = []
 for sec in lane_sections:
@@ -238,11 +264,16 @@ with open(map_file, "w", encoding="utf-8") as f:
 
 components.iframe("app/static/map.html", height=470, scrolling=False)
 
-st.markdown("""
+_walk_legend = (
+    '<span>🟪 <b>도보 (계단 제외)</b></span>'
+    if _route_mode == "wheel"
+    else '<span>🟧 <b>도보</b></span>'
+)
+st.markdown(f"""
 <div style="display:flex;gap:16px;justify-content:center;font-size:13px;margin-top:-8px;margin-bottom:12px;">
     <span>🟦 <b>지하철</b></span>
     <span>🟩 <b>버스</b></span>
-    <span>🟧 <b>도보</b></span>
+    {_walk_legend}
 </div>
 """, unsafe_allow_html=True)
 
@@ -273,27 +304,41 @@ for step in steps:
 
 st.write("---")
 
-# ─── 5. 교통약자 정보 ───
+# ─── 5. 교통약자 시설 정보 (카카오맵 지하철역 임베드) ───
 st.markdown("### ♿ 교통약자 시설 정보")
 
-acc_cols = st.columns(min(len(ACCESSIBILITY_INFO), 3))
-for idx, info in enumerate(ACCESSIBILITY_INFO[:3]):
-    with acc_cols[idx]:
-        status_color = "#4caf50" if info["status"] in ("정상 가동", "이용 가능") else "#ff9800"
-        st.markdown(
-            f'<div style="background:white;border:2px solid #e0e0e0;border-radius:12px;padding:14px;text-align:center;min-height:130px;">'
-            f'<div style="font-size:28px;">{info["icon"]}</div>'
-            f'<div style="font-size:{fs_small}px;font-weight:bold;margin-top:6px;">{info["station"]}</div>'
-            f'<div style="font-size:{fs_badge}px;color:#666;">{info["facility"]}</div>'
-            f'<div style="font-size:{fs_badge}px;color:{status_color};margin-top:4px;font-weight:bold;">{info["status"]}</div>'
-            f'</div>',
-            unsafe_allow_html=True,
-        )
+subway_steps = [s for s in steps if s["type"] == "subway"]
+station_names = []
+_seen = set()
+for s in subway_steps:
+    for nm in (s.get("start_name", ""), s.get("end_name", "")):
+        if nm and nm not in _seen:
+            station_names.append(nm)
+            _seen.add(nm)
 
-if len(ACCESSIBILITY_INFO) > 3:
-    with st.expander(f"➕ 시설 정보 더보기 ({len(ACCESSIBILITY_INFO) - 3}개)"):
-        for info in ACCESSIBILITY_INFO[3:]:
-            st.markdown(f"**{info['icon']} {info['station']}** - {info['facility']} ({info['status']})")
+if station_names:
+    # place_id → URL 캐시 조회/저장
+    station_urls = {}
+    for nm in station_names:
+        cache_key = f"kakao_subway_url_{nm}"
+        url = st.session_state.get(cache_key)
+        if not url:
+            url = get_subway_kakao_url(nm)
+            if url:
+                st.session_state[cache_key] = url
+        if url:
+            station_urls[nm] = url
+
+    if station_urls:
+        names = list(station_urls.keys())
+        tabs = st.tabs([f"🚇 {n}" for n in names])
+        for tab, nm in zip(tabs, names):
+            with tab:
+                components.iframe(station_urls[nm], height=600, scrolling=True)
+    else:
+        st.info("이 경로의 지하철역 교통약자 정보를 불러올 수 없습니다.")
+else:
+    st.info("이 경로에는 지하철 구간이 없습니다.")
 
 st.write("---")
 
