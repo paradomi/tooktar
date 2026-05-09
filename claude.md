@@ -1,0 +1,125 @@
+# 툭 타 (Took-Tah) - 교통약자 전용 대중교통 앱
+
+## 프로젝트 개요
+- 교통약자(휠체어, 유모차, 고령자)를 위한 배리어프리 대중교통 안내 웹앱
+- Streamlit + Python 기반, 발표용 프로토타입
+- 배포: Streamlit Community Cloud (https://github.com/paradomi/onetouch)
+
+## 기술 스택
+- Python 3.11, Streamlit
+- 환경변수: .env 파일 (절대 커밋하지 말 것)
+
+## 디렉토리 구조
+onetouch/
+├── app.py              # 메인 홈/검색 화면
+├── pages/
+│   ├── 1_경로_탐색.py    # 경로 리스트 화면
+│   └── 2_경로_상세.py    # 경로 상세 + AI 브리핑
+├── components/
+│   ├── header.py       # 앱 헤더
+│   ├── route_card.py   # 경로 카드 컴포넌트
+│   └── styles.py       # 글로벌 CSS 스타일
+├── data/
+│   └── dummy_data.py   # 더미 JSON 데이터
+├── .env                # API 키 (gitignore 대상)
+├── .gitignore
+└── requirements.txt
+## 핵심 설계 원칙
+- 모든 터치 영역 최소 48x48dp, 글자 크기 18px 이상
+- 고대비 색상, 메인 컬러 #1f77b4
+- session_state 키 규칙: 위젯용은 _input 접미사, 데이터 전달용은 selected_ 접두사
+- 저상버스 필터링은 lowPlate 필드 사용
+
+## 주의사항
+- .env 파일 절대 git에 커밋하지 말 것
+- Streamlit Cloud 배포 시 secrets는 st.secrets로 읽기
+- 공공 API 응답이 XML일 수 있음, format=json 파라미터 확인
+- git push 전 반드시 git status로 .env 포함 여부 확인
+
+
+## 코딩 규칙
+
+### Streamlit 규칙
+- st.session_state에서 위젯 key와 데이터 key 절대 겹치지 말 것
+  - 위젯용: `_input` 접미사 (예: destination_input)
+  - 데이터 전달용: `selected_` 접두사 (예: selected_destination)
+- 페이지 간 이동은 st.switch_page() 사용
+- 페이지 파일에서 상위 폴더 import 시 반드시 sys.path 추가:
+```python
+  import sys, os
+  sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+```
+- CSS 커스텀은 components/styles.py의 apply_global_styles()에 집중
+- 새 페이지 추가 시 반드시 apply_global_styles()와 render_header() 호출
+
+### API 호출 규칙
+- 모든 API 호출은 try-except로 감싸고, 실패 시 더미 데이터로 fallback
+- API 키는 os.getenv()로 읽되, Streamlit Cloud용 st.secrets도 fallback:
+```python
+  key = os.getenv("GBIS_API_KEY") or st.secrets.get("GBIS_API_KEY", "")
+```
+- 공공데이터 API는 응답이 XML일 수 있음. 항상 dataType=JSON 또는 format=json 파라미터 포함
+- API 응답은 반드시 status_code 확인 후 파싱
+- 시연용 fallback 데이터를 data/dummy_data.py에 항상 유지
+
+### 파일 수정 규칙
+- 기존 파일 수정 시 전체 덮어쓰기 하지 말고 변경 부분만 수정
+- 새 유틸 함수는 utils/ 폴더에, 새 컴포넌트는 components/ 폴더에
+- 새 파일 만들 때 상단에 한 줄 docstring 필수: """파일 설명"""
+- requirements.txt에 새 라이브러리 추가 시 버전 고정하지 말 것 (Streamlit Cloud 호환)
+
+### Git 규칙
+- commit 전 반드시 git status로 .env 포함 여부 확인
+- commit 메시지는 한국어로, 변경 내용 한 줄 요약
+- .env, venv/, __pycache__/는 절대 커밋하지 말 것
+
+### 테스트
+- API 연동 코드는 먼저 독립 테스트 스크립트로 확인 후 본 앱에 통합
+- streamlit run app.py로 로컬 테스트 후 push
+
+## API 상세 정보
+
+### 경기도 버스도착정보
+- Base URL: http://apis.data.go.kr/6410000/busarrivalservice/v2/getBusArrivalListv2
+- 필수 파라미터: serviceKey, stationId, format=json
+- 저상버스 필드: lowPlate (1이면 저상버스)
+- 응답 구조: body > items > item (리스트)
+
+### 경기도 버스노선정보
+- Base URL: http://apis.data.go.kr/6410000/busrouteservice/v2/getBusRouteListv2
+- 필수 파라미터: serviceKey, keyword, format=json
+
+### ODsay 대중교통 길찾기
+- Base URL: https://api.odsay.com/v1/api/searchPubTransPathT
+- 필수 파라미터: SX, SY, EX, EY, apiKey
+- 응답: 경로별 소요시간, 환승횟수, 경유 정류장 좌표
+
+### 카카오 로컬 API
+- 주소 → 좌표: https://dapi.kakao.com/v2/local/search/address
+- 키워드 검색: https://dapi.kakao.com/v2/local/search/keyword
+- 헤더: Authorization: KakaoAK {REST_API_KEY}
+
+## 작업 방식 규칙
+- 작업 시작 전, 필요한 정보가 있으면 사용자에게 먼저 질문한다
+- 실제 코드 수정/실행 전에 간결한 작업 계획을 먼저 제시하고, 사용자 승인을 받은 후 실행한다
+- 계획은 3~5줄 이내로 핵심만 작성한다
+
+## 자주 하는 실수 방지
+- Streamlit은 버튼 클릭 시 전체 스크립트가 재실행됨. 무거운 API 호출은 @st.cache_data 사용
+- st.link_button()은 외부 링크용, 내부 페이지 이동은 st.switch_page()
+- HTML 렌더링 시 unsafe_allow_html=True 필수
+- 한글 파일명(예: 1_경로_탐색.py)은 import 시 문제 가능 → sys.path 방식 사용
+
+# 작업 분담 지침
+
+## 역할 분리
+- **Opus 4.7 (메인)**: 코드 설계, 구현 계획 수립, 작성된 코드 검사/리뷰
+- **Sonnet 4.6 (서브 에이전트)**: 실제 코드 작성/편집
+
+## 진행 방식
+1. Opus가 사용자 요구를 분석하고 구현 계획(어떤 파일을, 어떻게 수정할지)을 세운다.
+2. Opus는 직접 Edit/Write를 하지 않고, Agent 도구로 sonnet 4.6 에이전트를 호출해 구체적인 코드 작성 지시를 내린다.
+3. Sonnet 에이전트가 작성을 마치면 Opus가 변경된 파일을 읽어 검사하고, 필요하면 추가 수정을 다시 sonnet에게 지시한다.
+
+## 예외
+- 환경 변수 확인, 단순 파일 읽기/조회, git 상태 확인 등 검토·계획 단계의 read-only 작업은 Opus가 직접 수행해도 된다.

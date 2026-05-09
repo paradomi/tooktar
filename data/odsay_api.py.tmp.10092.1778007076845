@@ -1,0 +1,292 @@
+"""ODsay 대중교통 경로 + 카카오 도로 경로 API 연동"""
+
+import os
+import requests
+import urllib.parse
+
+
+ODSAY_BASE = "https://api.odsay.com/v1/api"
+ODSAY_HEADERS = {"Referer": "http://localhost:8501"}
+KAKAO_NAVI_URL = "https://apis-navi.kakaomobility.com/v1/directions"
+
+
+def search_pub_trans_path(sx: float, sy: float, ex: float, ey: float) -> dict | None:
+    """출발지→도착지 대중교통 경로를 검색한다. (WGS84 경위도)"""
+    api_key = os.environ.get("ODSAY_API_KEY", "")
+    if not api_key:
+        return None
+
+    params = {
+        "SX": sx, "SY": sy,
+        "EX": ex, "EY": ey,
+        "apiKey": api_key,
+    }
+    try:
+        resp = requests.get(
+            f"{ODSAY_BASE}/searchPubTransPathT",
+            params=params, headers=ODSAY_HEADERS, timeout=10,
+        )
+        resp.raise_for_status()
+        return resp.json()
+    except Exception:
+        return None
+
+
+def get_route_graphical(map_obj: str) -> list[dict]:
+    """ODsay mapObj를 사용해 실제 도로/노선 좌표를 가져온다."""
+    api_key = os.environ.get("ODSAY_API_KEY", "")
+    if not api_key:
+        return []
+
+    params = {
+        "apiKey": api_key,
+        "mapObject": map_obj,
+    }
+    try:
+        resp = requests.get(
+            f"{ODSAY_BASE}/loadLane",
+            params=params, headers=ODSAY_HEADERS, timeout=10,
+        )
+        resp.raise_for_status()
+        return resp.json()
+    except Exception:
+        return []
+
+
+def parse_path_to_map_data(path_result: dict) -> dict:
+    """ODsay searchPubTransPathT 응답에서 지도에 필요한 데이터를 추출한다.
+
+    Returns:
+        {
+            "segments": [
+                {
+                    "type": "walk" | "bus" | "subway",
+                    "color": "#hex",
+                    "coords": [{"lat": ..., "lng": ...}, ...],
+                    "desc": "구간 설명",
+                    "name": "노선명",
+                },
+                ...
+            ],
+            "markers": [
+                {"lat": ..., "lng": ..., "type": "start"|"end"|"transit", "name": "..."},
+                ...
+            ],
+            "map_obj": "mapObj string for loadLane",
+        }
+    """
+    if not path_result or "result" not in path_result:
+        return {"segments": [], "markers": [], "map_obj": ""}
+
+    result = path_result["result"]
+    paths = result.get("path", [])
+    if not paths:
+        return {"segments": [], "markers": [], "map_obj": ""}
+
+    best = paths[0]
+    info = best.get("info", {})
+    sub_paths = best.get("subPath", [])
+    map_obj = info.get("mapObj", "")
+
+    segments = []
+    markers = []
+
+    for sp in sub_paths:
+        traffic_type = sp.get("trafficType")  # 1=지하철, 2=버스, 3=도보
+        section_time = sp.get("sectionTime", 0)
+        distance = sp.get("distance", 0)
+
+        if traffic_type == 3:
+            seg_type = "walk"
+            color = "#888888"
+            name = "도보"
+            desc = f"도보 {section_time}분 ({distance}m)"
+
+            sx = sp.get("startX")
+            sy = sp.get("startY")
+            ex = sp.get("endX")
+            ey = sp.get("endY")
+            coords = []
+            if sx and sy:
+                coords.append({"lat": float(sy), "lng": float(sx)})
+            if ex and ey:
+                coords.append({"lat": float(ey), "lng": float(ex)})
+
+            segments.append({"type": seg_type, "color": color, "coords": coords, "desc": desc, "name": name})
+
+        elif traffic_type == 2:
+            seg_type = "bus"
+            lane = sp.get("lane", [{}])[0] if sp.get("lane") else {}
+            bus_no = lane.get("busNo", "버스")
+            bus_type = lane.get("type", 0)
+            color = _bus_color(bus_type)
+            station_count = sp.get("stationCount", 0)
+            desc = f"{bus_no}번 버스 {station_count}개 정류장 ({section_time}분)"
+            name = bus_no
+
+            coords = _extract_passStop_coords(sp)
+            segments.append({"type": seg_type, "color": color, "coords": coords, "desc": desc, "name": name})
+
+            start_name = sp.get("startName", "")
+            end_name = sp.get("endName", "")
+            sx = sp.get("startX")
+            sy = sp.get("startY")
+            ex = sp.get("endX")
+            ey = sp.get("endY")
+            if sx and sy:
+                markers.append({"lat": float(sy), "lng": float(sx), "type": "transit", "name": f"🚌 {start_name}"})
+            if ex and ey:
+                markers.append({"lat": float(ey), "lng": float(ex), "type": "transit", "name": f"🚌 {end_name}"})
+
+        elif traffic_type == 1:
+            seg_type = "subway"
+            lane = sp.get("lane", [{}])[0] if sp.get("lane") else {}
+            line_name = lane.get("name", "지하철")
+            color = _subway_color(lane.get("subwayCode", 0))
+            station_count = sp.get("stationCount", 0)
+            desc = f"{line_name} {station_count}개 역 ({section_time}분)"
+            name = line_name
+
+            coords = _extract_passStop_coords(sp)
+            segments.append({"type": seg_type, "color": color, "coords": coords, "desc": desc, "name": name})
+
+            start_name = sp.get("startName", "")
+            end_name = sp.get("endName", "")
+            sx = sp.get("startX")
+            sy = sp.get("startY")
+            ex = sp.get("endX")
+            ey = sp.get("endY")
+            if sx and sy:
+                markers.append({"lat": float(sy), "lng": float(sx), "type": "transit", "name": f"🚇 {start_name}"})
+            if ex and ey:
+                markers.append({"lat": float(ey), "lng": float(ex), "type": "transit", "name": f"🚇 {end_name}"})
+
+    sx = info.get("firstStartStation")
+    ex = info.get("lastEndStation")
+    total_time = info.get("totalTime", 0)
+
+    return {
+        "segments": segments,
+        "markers": markers,
+        "map_obj": map_obj,
+        "total_time": total_time,
+        "info": info,
+    }
+
+
+def load_lane_coords(map_obj: str) -> list[dict]:
+    """loadLane API로 실제 도로/노선 그래픽 좌표를 가져온다."""
+    data = get_route_graphical(map_obj)
+    if not data or "result" not in data:
+        return []
+
+    result = data["result"]
+    lane_list = result.get("lane", [])
+    segments = []
+
+    for lane in lane_list:
+        section_class = lane.get("class", 0)  # 1=지하철, 2=버스, 3=도보
+        color = lane.get("lineColor", "")
+        if color and not color.startswith("#"):
+            color = f"#{color}"
+        if not color:
+            color = "#1f77b4"
+
+        seg_type = "subway" if section_class == 1 else "bus" if section_class == 2 else "walk"
+        name = lane.get("name", "")
+
+        graph = lane.get("section", [])
+        coords = []
+        for section in graph:
+            graphPos = section.get("graphPos", "")
+            if graphPos:
+                points = graphPos.split(" ")
+                for pt in points:
+                    parts = pt.split(",")
+                    if len(parts) == 2:
+                        coords.append({"lat": float(parts[1]), "lng": float(parts[0])})
+
+        segments.append({"type": seg_type, "color": color, "coords": coords, "name": name})
+
+    return segments
+
+
+def merge_segments(parsed_segments: list[dict], lane_segments: list[dict]) -> list[dict]:
+    """loadLane 그래픽 좌표 + parse_path의 도보 구간을 순서대로 합친다.
+
+    loadLane은 버스/지하철 노선 좌표만 제공하고 도보 구간이 빠져 있다.
+    parsed_segments에서 도보(walk) 구간을 뽑아 적절한 위치에 삽입한다.
+    """
+    walk_segs = [s for s in parsed_segments if s["type"] == "walk"]
+    transit_segs = [s for s in parsed_segments if s["type"] != "walk"]
+
+    lane_with_meta = []
+    for ls in lane_segments:
+        matched = None
+        for ts in transit_segs:
+            if ts.get("name") and ls.get("name") and ts["name"] in ls["name"]:
+                matched = ts
+                break
+        lane_with_meta.append({
+            **ls,
+            "desc": matched["desc"] if matched else "",
+        })
+
+    merged = []
+    lane_idx = 0
+
+    for ps in parsed_segments:
+        if ps["type"] == "walk":
+            merged.append(ps)
+        else:
+            if lane_idx < len(lane_with_meta):
+                merged.append(lane_with_meta[lane_idx])
+                lane_idx += 1
+            else:
+                merged.append(ps)
+
+    while lane_idx < len(lane_with_meta):
+        merged.append(lane_with_meta[lane_idx])
+        lane_idx += 1
+
+    return merged
+
+
+def _extract_passStop_coords(sub_path: dict) -> list[dict]:
+    """passStopList에서 정류장/역 좌표를 추출한다."""
+    coords = []
+    pass_stop = sub_path.get("passStopList", {})
+    stations = pass_stop.get("stations", [])
+    for st in stations:
+        x = st.get("x")
+        y = st.get("y")
+        if x and y:
+            coords.append({"lat": float(y), "lng": float(x)})
+    return coords
+
+
+def _bus_color(bus_type: int) -> str:
+    colors = {
+        1: "#33CC99",   # 일반
+        2: "#3366CC",   # 좌석
+        3: "#EE2737",   # 마을
+        4: "#FF0000",   # 직행좌석
+        5: "#009933",   # 지선
+        6: "#3366CC",   # 외곽
+        10: "#FF6319",  # 급행
+        11: "#0068B7",  # 간선
+        12: "#53B332",  # 지선
+        13: "#F5A200",  # 순환
+        14: "#AA4439",  # 광역
+        15: "#AA4439",  # 급행간선
+    }
+    return colors.get(bus_type, "#33CC99")
+
+
+def _subway_color(subway_code: int) -> str:
+    colors = {
+        1: "#0052A4", 2: "#009B3E", 3: "#EF7C1C", 4: "#00A2D1",
+        5: "#996CAC", 6: "#CD7C2F", 7: "#747F00", 8: "#EA545D",
+        9: "#BDB092", 100: "#77C4A3", 101: "#F5A200", 104: "#7DC4E0",
+    }
+    return colors.get(subway_code, "#1f77b4")

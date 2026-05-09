@@ -1,0 +1,296 @@
+"""ODsay 대중교통 경로 + 카카오 도로 경로 API 연동"""
+
+import os
+import requests
+
+
+ODSAY_BASE = "https://api.odsay.com/v1/api"
+ODSAY_HEADERS = {"Referer": "http://localhost:8501"}
+KAKAO_NAVI_URL = "https://apis-navi.kakaomobility.com/v1/directions"
+TMAP_PEDESTRIAN_URL = "https://apis.openapi.sk.com/tmap/routes/pedestrian"
+
+
+def search_pub_trans_path(sx: float, sy: float, ex: float, ey: float) -> dict | None:
+    api_key = os.environ.get("ODSAY_API_KEY", "")
+    if not api_key:
+        return None
+    params = {"SX": sx, "SY": sy, "EX": ex, "EY": ey, "apiKey": api_key}
+    try:
+        resp = requests.get(
+            f"{ODSAY_BASE}/searchPubTransPathT",
+            params=params, headers=ODSAY_HEADERS, timeout=10,
+        )
+        resp.raise_for_status()
+        return resp.json()
+    except Exception:
+        return None
+
+
+def _tmap_walk_coords(sx: float, sy: float, ex: float, ey: float) -> list[dict] | None:
+    """Tmap 보행자 경로 API로 두 점 사이 도보 좌표를 가져온다."""
+    tmap_key = os.environ.get("TMAP", "")
+    if not tmap_key:
+        return None
+    try:
+        resp = requests.post(
+            TMAP_PEDESTRIAN_URL,
+            headers={"appKey": tmap_key, "Content-Type": "application/json"},
+            json={
+                "startX": str(sx), "startY": str(sy),
+                "endX": str(ex), "endY": str(ey),
+                "startName": "출발", "endName": "도착",
+            },
+            timeout=8,
+        )
+        data = resp.json()
+        features = data.get("features", [])
+        coords = []
+        for feat in features:
+            geom = feat.get("geometry", {})
+            if geom.get("type") == "Point":
+                c = geom["coordinates"]
+                coords.append({"lat": c[1], "lng": c[0]})
+            elif geom.get("type") == "LineString":
+                for c in geom["coordinates"]:
+                    coords.append({"lat": c[1], "lng": c[0]})
+        return coords if coords else None
+    except Exception:
+        return None
+
+
+def _kakao_road_coords(sx: float, sy: float, ex: float, ey: float) -> list[dict]:
+    """카카오 길찾기 API로 두 점 사이 실제 도로 좌표를 가져온다."""
+    rest_key = os.environ.get("KAKAO_REST_API_KEY", "")
+    if not rest_key:
+        return [{"lat": sy, "lng": sx}, {"lat": ey, "lng": ex}]
+    try:
+        resp = requests.get(
+            KAKAO_NAVI_URL,
+            params={"origin": f"{sx},{sy}", "destination": f"{ex},{ey}"},
+            headers={"Authorization": f"KakaoAK {rest_key}"},
+            timeout=8,
+        )
+        data = resp.json()
+        routes = data.get("routes", [])
+        if not routes or routes[0].get("result_code") != 0:
+            return [{"lat": sy, "lng": sx}, {"lat": ey, "lng": ex}]
+        coords = []
+        for section in routes[0].get("sections", []):
+            for road in section.get("roads", []):
+                verts = road.get("vertexes", [])
+                for i in range(0, len(verts) - 1, 2):
+                    coords.append({"lat": verts[i + 1], "lng": verts[i]})
+        return coords if coords else [{"lat": sy, "lng": sx}, {"lat": ey, "lng": ex}]
+    except Exception:
+        return [{"lat": sy, "lng": sx}, {"lat": ey, "lng": ex}]
+
+
+def _haversine(lat1, lng1, lat2, lng2) -> float:
+    """두 좌표 간 직선거리(m)를 구한다."""
+    import math
+    R = 6371000
+    dlat = math.radians(lat2 - lat1)
+    dlng = math.radians(lng2 - lng1)
+    a = math.sin(dlat / 2) ** 2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlng / 2) ** 2
+    return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+
+def _road_coords_between(sx, sy, ex, ey, rest_key: str) -> list[dict] | None:
+    """두 점 사이 카카오 길찾기 도로 좌표. 실패 시 None 반환."""
+    try:
+        resp = requests.get(
+            KAKAO_NAVI_URL,
+            params={"origin": f"{sx},{sy}", "destination": f"{ex},{ey}"},
+            headers={"Authorization": f"KakaoAK {rest_key}"},
+            timeout=8,
+        )
+        data = resp.json()
+        routes = data.get("routes", [])
+        if not routes or routes[0].get("result_code") != 0:
+            return None
+        coords = []
+        for section in routes[0].get("sections", []):
+            for road in section.get("roads", []):
+                verts = road.get("vertexes", [])
+                for i in range(0, len(verts) - 1, 2):
+                    coords.append({"lat": verts[i + 1], "lng": verts[i]})
+        return coords if coords else None
+    except Exception:
+        return None
+
+
+def _road_coords_via_waypoints(stations: list[dict]) -> list[dict]:
+    """정류장 목록을 따라 인접 정류장 쌍별로 카카오 길찾기를 호출한다.
+    도로거리가 직선거리의 2배를 넘으면 루프로 판단해 직선으로 대체한다."""
+    if len(stations) < 2:
+        return [{"lat": float(s["y"]), "lng": float(s["x"])} for s in stations]
+
+    rest_key = os.environ.get("KAKAO_REST_API_KEY", "")
+    if not rest_key:
+        return [{"lat": float(s["y"]), "lng": float(s["x"])} for s in stations]
+
+    all_coords = []
+    for i in range(len(stations) - 1):
+        s1, s2 = stations[i], stations[i + 1]
+        sx, sy = float(s1["x"]), float(s1["y"])
+        ex, ey = float(s2["x"]), float(s2["y"])
+
+        straight_dist = _haversine(sy, sx, ey, ex)
+
+        road = _road_coords_between(sx, sy, ex, ey, rest_key)
+
+        if road and len(road) >= 2:
+            road_dist = sum(
+                _haversine(road[j]["lat"], road[j]["lng"], road[j + 1]["lat"], road[j + 1]["lng"])
+                for j in range(len(road) - 1)
+            )
+            if straight_dist > 0 and road_dist / straight_dist > 2.0:
+                all_coords.append({"lat": sy, "lng": sx})
+                all_coords.append({"lat": ey, "lng": ex})
+            else:
+                all_coords.extend(road)
+        else:
+            all_coords.append({"lat": sy, "lng": sx})
+            all_coords.append({"lat": ey, "lng": ex})
+
+    return all_coords
+
+
+def build_route_segments(path_result: dict, origin_x=None, origin_y=None, dest_x=None, dest_y=None) -> dict:
+    """ODsay 응답 → 카카오 도로 경로를 결합해 지도 데이터를 만든다."""
+    if not path_result or "result" not in path_result:
+        return {"segments": [], "markers": []}
+
+    result = path_result["result"]
+    paths = result.get("path", [])
+    if not paths:
+        return {"segments": [], "markers": []}
+
+    best = paths[0]
+    info = best.get("info", {})
+    sub_paths = best.get("subPath", [])
+    info["_origin_x"] = origin_x
+    info["_origin_y"] = origin_y
+    info["_dest_x"] = dest_x
+    info["_dest_y"] = dest_y
+
+    segments = []
+    markers = []
+
+    for idx, sp in enumerate(sub_paths):
+        traffic_type = sp.get("trafficType")
+        section_time = sp.get("sectionTime", 0)
+        distance = sp.get("distance", 0)
+
+        if traffic_type == 3:
+            sx, sy = sp.get("startX"), sp.get("startY")
+            ex, ey = sp.get("endX"), sp.get("endY")
+
+            if not (sx and sy):
+                if idx == 0 and info.get("_origin_x"):
+                    sx, sy = info["_origin_x"], info["_origin_y"]
+                if not (sx and sy) and idx > 0:
+                    prev = sub_paths[idx - 1]
+                    sx, sy = prev.get("endX"), prev.get("endY")
+            if not (ex and ey):
+                if idx == len(sub_paths) - 1 and info.get("_dest_x"):
+                    ex, ey = info["_dest_x"], info["_dest_y"]
+                if not (ex and ey) and idx < len(sub_paths) - 1:
+                    nxt = sub_paths[idx + 1]
+                    ex, ey = nxt.get("startX"), nxt.get("startY")
+
+            coords = []
+            if sx and sy and ex and ey:
+                walk_road = _tmap_walk_coords(float(sx), float(sy), float(ex), float(ey))
+                if walk_road:
+                    coords = walk_road
+            if not coords:
+                if sx and sy:
+                    coords.append({"lat": float(sy), "lng": float(sx)})
+                if ex and ey:
+                    coords.append({"lat": float(ey), "lng": float(ex)})
+            segments.append({
+                "type": "walk",
+                "color": "#FF8C00",
+                "coords": coords,
+                "desc": f"도보 {section_time}분 ({distance}m)",
+                "name": "도보",
+            })
+
+        elif traffic_type == 2:
+            lane = sp.get("lane", [{}])[0] if sp.get("lane") else {}
+            bus_no = lane.get("busNo", "버스")
+            bus_type = lane.get("type", 0)
+            color = _bus_color(bus_type)
+            station_count = sp.get("stationCount", 0)
+
+            stations = sp.get("passStopList", {}).get("stations", [])
+            coords = _road_coords_via_waypoints(stations)
+
+            segments.append({
+                "type": "bus",
+                "color": color,
+                "coords": coords,
+                "desc": f"{bus_no}번 버스 {station_count}정류장 ({section_time}분)",
+                "name": str(bus_no),
+            })
+
+            start_name = sp.get("startName", "")
+            end_name = sp.get("endName", "")
+            sx, sy = sp.get("startX"), sp.get("startY")
+            ex, ey = sp.get("endX"), sp.get("endY")
+            if sx and sy:
+                markers.append({"lat": float(sy), "lng": float(sx), "type": "bus", "name": f"🚌 {start_name}"})
+            if ex and ey:
+                markers.append({"lat": float(ey), "lng": float(ex), "type": "bus", "name": f"🚌 {end_name}"})
+
+        elif traffic_type == 1:
+            lane = sp.get("lane", [{}])[0] if sp.get("lane") else {}
+            line_name = lane.get("name", "지하철")
+            color = _subway_color(lane.get("subwayCode", 0))
+            station_count = sp.get("stationCount", 0)
+
+            stations = sp.get("passStopList", {}).get("stations", [])
+            coords = [{"lat": float(s["y"]), "lng": float(s["x"])} for s in stations if s.get("x") and s.get("y")]
+
+            segments.append({
+                "type": "subway",
+                "color": color,
+                "coords": coords,
+                "desc": f"{line_name} {station_count}역 ({section_time}분)",
+                "name": line_name,
+            })
+
+            start_name = sp.get("startName", "")
+            end_name = sp.get("endName", "")
+            sx, sy = sp.get("startX"), sp.get("startY")
+            ex, ey = sp.get("endX"), sp.get("endY")
+            if sx and sy:
+                markers.append({"lat": float(sy), "lng": float(sx), "type": "subway", "name": f"🚇 {start_name}"})
+            if ex and ey:
+                markers.append({"lat": float(ey), "lng": float(ex), "type": "subway", "name": f"🚇 {end_name}"})
+
+    return {
+        "segments": segments,
+        "markers": markers,
+        "total_time": info.get("totalTime", 0),
+        "info": info,
+    }
+
+
+def _bus_color(bus_type: int) -> str:
+    colors = {
+        1: "#33CC99", 2: "#3366CC", 3: "#EE2737", 4: "#FF0000",
+        5: "#009933", 6: "#3366CC", 10: "#FF6319", 11: "#0068B7",
+        12: "#53B332", 13: "#F5A200", 14: "#AA4439", 15: "#AA4439",
+    }
+    return colors.get(bus_type, "#33CC99")
+
+
+def _subway_color(subway_code: int) -> str:
+    colors = {
+        1: "#0052A4", 2: "#009B3E", 3: "#EF7C1C", 4: "#00A2D1",
+        5: "#996CAC", 6: "#CD7C2F", 7: "#747F00", 8: "#EA545D",
+        9: "#BDB092", 100: "#77C4A3", 101: "#F5A200", 104: "#7DC4E0",
+    }
+    return colors.get(subway_code, "#1f77b4")
