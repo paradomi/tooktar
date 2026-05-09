@@ -56,12 +56,20 @@ def parse_path_to_steps(path_info: dict) -> list[dict]:
         section_time = sp.get("sectionTime", 0)
 
         if traffic_type == 3:
+            start_name = sp.get("startName", "")
+            end_name = sp.get("endName", "")
             steps.append({
                 "step": len(steps) + 1,
                 "type": "walk",
                 "desc": f"도보 {section_time}분 ({distance}m)",
                 "barrier_free": True,
                 "section_time": section_time,
+                "start_name": start_name,
+                "end_name": end_name,
+                "start_x": sp.get("startX"),
+                "start_y": sp.get("startY"),
+                "end_x": sp.get("endX"),
+                "end_y": sp.get("endY"),
             })
         elif traffic_type == 2:
             lane = sp.get("lane", [{}])

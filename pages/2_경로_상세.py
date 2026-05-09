@@ -12,6 +12,7 @@ load_dotenv()
 from components.styles import apply_global_styles, FONT_SIZE_PRESETS
 from components.header import render_header
 from services.odsay_api import load_lane
+from services.tmap_api import pedestrian_route
 from data.dummy_data import ACCESSIBILITY_INFO, AI_BRIEFING
 
 st.set_page_config(page_title="경로 상세", page_icon="🗺️", layout="centered")
@@ -90,20 +91,31 @@ if lane_data and "lane" in lane_data:
                     color = "#999999"
                 lane_sections.append({"coords": coords, "color": color})
 
-# 도보 구간 (subPath의 start/end 좌표로 직선 표시)
+# 도보 구간 (Tmap 보행자 경로 API → 실패 시 직선 fallback)
 walk_lines = []
 for step in steps:
     if step["type"] == "walk":
         sx, sy = step.get("start_x"), step.get("start_y")
         ex, ey = step.get("end_x"), step.get("end_y")
         if sx and sy and ex and ey:
-            walk_lines.append({
-                "coords": [
+            cache_key = f"tmap_walk_{sx}_{sy}_{ex}_{ey}"
+            if cache_key in st.session_state:
+                tmap_coords = st.session_state[cache_key]
+            else:
+                tmap_coords = pedestrian_route(
+                    sx, sy, ex, ey,
+                    start_name=step.get("start_name", "출발"),
+                    end_name=step.get("end_name", "도착"),
+                )
+                st.session_state[cache_key] = tmap_coords
+            if tmap_coords:
+                coords = tmap_coords
+            else:
+                coords = [
                     {"lat": float(sy), "lng": float(sx)},
                     {"lat": float(ey), "lng": float(ex)},
-                ],
-                "color": "#FF8C00",
-            })
+                ]
+            walk_lines.append({"coords": coords, "color": "#FF8C00"})
 
 origin_coord = st.session_state.get("origin_coord", {})
 dest_coord = st.session_state.get("dest_coord", {})
