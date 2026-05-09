@@ -92,33 +92,52 @@ if lane_data and "lane" in lane_data:
                 lane_sections.append({"coords": coords, "color": color})
 
 # 도보 구간 (Tmap 보행자 경로 API → 실패 시 직선 fallback)
-walk_lines = []
-for step in steps:
-    if step["type"] == "walk":
-        sx, sy = step.get("start_x"), step.get("start_y")
-        ex, ey = step.get("end_x"), step.get("end_y")
-        if sx and sy and ex and ey:
-            cache_key = f"tmap_walk_{sx}_{sy}_{ex}_{ey}"
-            if cache_key in st.session_state:
-                tmap_coords = st.session_state[cache_key]
-            else:
-                tmap_coords = pedestrian_route(
-                    sx, sy, ex, ey,
-                    start_name=step.get("start_name", "출발"),
-                    end_name=step.get("end_name", "도착"),
-                )
-                st.session_state[cache_key] = tmap_coords
-            if tmap_coords:
-                coords = tmap_coords
-            else:
-                coords = [
-                    {"lat": float(sy), "lng": float(sx)},
-                    {"lat": float(ey), "lng": float(ex)},
-                ]
-            walk_lines.append({"coords": coords, "color": "#FF8C00"})
-
 origin_coord = st.session_state.get("origin_coord", {})
 dest_coord = st.session_state.get("dest_coord", {})
+
+walk_lines = []
+for idx, step in enumerate(steps):
+    if step["type"] != "walk":
+        continue
+    sx, sy = step.get("start_x"), step.get("start_y")
+    ex, ey = step.get("end_x"), step.get("end_y")
+    # 인접 step에서 좌표 보충
+    if not (sx and sy):
+        for j in range(idx - 1, -1, -1):
+            ps = steps[j]
+            if ps.get("end_x") and ps.get("end_y"):
+                sx, sy = ps["end_x"], ps["end_y"]
+                break
+        if not (sx and sy) and origin_coord:
+            sx, sy = origin_coord.get("lng"), origin_coord.get("lat")
+    if not (ex and ey):
+        for j in range(idx + 1, len(steps)):
+            ns = steps[j]
+            if ns.get("start_x") and ns.get("start_y"):
+                ex, ey = ns["start_x"], ns["start_y"]
+                break
+        if not (ex and ey) and dest_coord:
+            ex, ey = dest_coord.get("lng"), dest_coord.get("lat")
+    if not (sx and sy and ex and ey):
+        continue
+    cache_key = f"tmap_walk_{sx}_{sy}_{ex}_{ey}"
+    tmap_coords = st.session_state.get(cache_key)
+    if not tmap_coords:
+        tmap_coords = pedestrian_route(
+            sx, sy, ex, ey,
+            start_name=step.get("start_name", "출발"),
+            end_name=step.get("end_name", "도착"),
+        )
+        if tmap_coords:
+            st.session_state[cache_key] = tmap_coords
+    if tmap_coords:
+        coords = tmap_coords
+    else:
+        coords = [
+            {"lat": float(sy), "lng": float(sx)},
+            {"lat": float(ey), "lng": float(ex)},
+        ]
+    walk_lines.append({"coords": coords, "color": "#FF8C00"})
 
 all_coords = []
 for sec in lane_sections:
@@ -221,8 +240,8 @@ components.iframe("app/static/map.html", height=470, scrolling=False)
 
 st.markdown("""
 <div style="display:flex;gap:16px;justify-content:center;font-size:13px;margin-top:-8px;margin-bottom:12px;">
-    <span>🟦 <b>버스</b></span>
-    <span>🟩 <b>지하철</b></span>
+    <span>🟦 <b>지하철</b></span>
+    <span>🟩 <b>버스</b></span>
     <span>🟧 <b>도보</b></span>
 </div>
 """, unsafe_allow_html=True)

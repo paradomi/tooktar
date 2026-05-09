@@ -56,20 +56,25 @@ def parse_path_to_steps(path_info: dict) -> list[dict]:
         section_time = sp.get("sectionTime", 0)
 
         if traffic_type == 3:
-            start_name = sp.get("startName", "")
-            end_name = sp.get("endName", "")
+            # ODsay 도보 subPath는 좌표가 없는 경우가 많음 → 인접 subPath에서 추론
+            prev_sp = sub_paths[i-1] if i > 0 else None
+            next_sp = sub_paths[i+1] if i + 1 < len(sub_paths) else None
+            sx = sp.get("startX") or (prev_sp.get("endX") if prev_sp else None)
+            sy = sp.get("startY") or (prev_sp.get("endY") if prev_sp else None)
+            ex = sp.get("endX") or (next_sp.get("startX") if next_sp else None)
+            ey = sp.get("endY") or (next_sp.get("startY") if next_sp else None)
             steps.append({
                 "step": len(steps) + 1,
                 "type": "walk",
                 "desc": f"도보 {section_time}분 ({distance}m)",
                 "barrier_free": True,
                 "section_time": section_time,
-                "start_name": start_name,
-                "end_name": end_name,
-                "start_x": sp.get("startX"),
-                "start_y": sp.get("startY"),
-                "end_x": sp.get("endX"),
-                "end_y": sp.get("endY"),
+                "start_name": sp.get("startName", ""),
+                "end_name": sp.get("endName", ""),
+                "start_x": sx,
+                "start_y": sy,
+                "end_x": ex,
+                "end_y": ey,
             })
         elif traffic_type == 2:
             lane = sp.get("lane", [{}])
@@ -111,6 +116,10 @@ def parse_path_to_steps(path_info: dict) -> list[dict]:
                 "end_name": end_name,
                 "station_count": station_count,
                 "section_time": section_time,
+                "start_x": sp.get("startX"),
+                "start_y": sp.get("startY"),
+                "end_x": sp.get("endX"),
+                "end_y": sp.get("endY"),
             })
     return steps
 

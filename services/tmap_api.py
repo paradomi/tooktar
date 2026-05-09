@@ -26,8 +26,8 @@ def pedestrian_route(start_x, start_y, end_x, end_y, start_name="출발", end_na
         "endY": str(end_y),
         "reqCoordType": "WGS84GEO",
         "resCoordType": "WGS84GEO",
-        "startName": start_name,
-        "endName": end_name,
+        "startName": "start",
+        "endName": "end",
     }
 
     try:
