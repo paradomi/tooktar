@@ -217,11 +217,7 @@ map_file = os.path.join(static_dir, "map.html")
 with open(map_file, "w", encoding="utf-8") as f:
     f.write(kakao_map_html)
 
-st.markdown(
-    '<iframe src="/app/static/map.html" width="100%" height="470" '
-    'style="border:none;border-radius:16px;" loading="lazy"></iframe>',
-    unsafe_allow_html=True,
-)
+components.iframe("app/static/map.html", height=470, scrolling=False)
 
 st.markdown("""
 <div style="display:flex;gap:16px;justify-content:center;font-size:13px;margin-top:-8px;margin-bottom:12px;">
