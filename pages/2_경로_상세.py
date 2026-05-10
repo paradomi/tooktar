@@ -820,10 +820,6 @@ if station_names:
 else:
     st.info("이 경로에는 지하철 구간이 없습니다.")
     
-    import streamlit as st
-st.write(f"API 상태 코드: {response.status_code}") 
-st.write(f"API 응답 내용: {response.text}")
-
 st.write("---")
 
 # ─── 6. AI 요약 브리핑 ───
