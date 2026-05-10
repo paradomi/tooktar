@@ -1,41 +1,68 @@
-"""경로 카드 컴포넌트 - ODsay 데이터 대응"""
-
+"""경로 카드 (HTML 디자인 + Streamlit 버튼)"""
 import streamlit as st
-from components.styles import FONT_SIZE_PRESETS
+
+NAVY = "#002F6C"
 
 
-def render_route_card(route, key_prefix=""):
-    """경로 정보 카드 렌더링"""
-
-    level = st.session_state.get("font_size_level", "보통")
-    f = FONT_SIZE_PRESETS.get(level, FONT_SIZE_PRESETS["보통"])
-    fs_body = f["body"]
-    fs_small = max(fs_body - 4, 12)
-    fs_big = f["h2"]
-
+def render_route_card(route, key_prefix="", lf_score=None):
     path_type = route.get("path_type", 0)
     type_icon = {1: "🚇", 2: "🚌", 3: "🚌🚇"}.get(path_type, "🚌")
-    border_color = "#1f77b4" if path_type == 2 else "#2DB400" if path_type == 1 else "#6a5acd"
-
     payment = route.get("payment", 0)
     total_walk = route.get("total_walk", 0)
+    route_id = route.get("id", 0)
+
+    # 저상버스 점수 배지 (휠체어 모드에서만 전달됨)
+    lf_badge = ""
+    if lf_score is not None:
+        if lf_score >= 1.0:
+            lf_badge = (
+                f'<span style="background:{NAVY};color:white;font-size:0.75rem;'
+                f'font-weight:700;padding:3px 10px;border-radius:10px;'
+                f'margin-left:8px;vertical-align:middle;">♿ 저상 도착 가능</span>'
+            )
+        elif lf_score > 0:
+            pct = int(lf_score * 100)
+            lf_badge = (
+                f'<span style="background:#FFA726;color:white;font-size:0.75rem;'
+                f'font-weight:700;padding:3px 10px;border-radius:10px;'
+                f'margin-left:8px;vertical-align:middle;">♿ 일부 ({pct}%)</span>'
+            )
+        else:
+            lf_badge = (
+                f'<span style="background:#999;color:white;font-size:0.75rem;'
+                f'font-weight:700;padding:3px 10px;border-radius:10px;'
+                f'margin-left:8px;vertical-align:middle;">♿ 저상 미도착</span>'
+            )
 
     st.markdown(
-        f'<div style="background:white;border:2px solid {border_color};border-radius:16px;padding:20px;margin-bottom:12px;">'
-        f'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">'
-        f'<span style="font-size:{fs_big}px;font-weight:bold;">{route["total_minutes"]}분</span>'
-        f'<span style="font-size:{fs_small}px;color:#666;">환승 {route["transfers"]}회</span>'
-        f'</div>'
-        f'<div style="font-size:{fs_body}px;margin-bottom:8px;color:#333;">{type_icon} {route["summary"]}</div>'
-        f'<div style="font-size:{fs_small}px;color:#666;margin-bottom:8px;">💰 {payment:,}원 · 🚶 도보 {total_walk}m</div>'
-        f'<div style="background:#f0f7ff;padding:10px 14px;border-radius:8px;font-size:{fs_body}px;margin-top:8px;">'
-        f'🚌 <b>{route["low_floor_bus_no"]}</b>'
-        f'</div>'
-        f'</div>',
+        f'''
+        <div style="
+            border: 2px solid {NAVY};
+            border-radius: 20px;
+            padding: 20px;
+            margin-bottom: 8px;
+            background: white;
+            transition: transform 0.15s, box-shadow 0.15s;
+        ">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                <span style="font-size:2rem;font-weight:700;color:{NAVY};">{route['total_minutes']}분{lf_badge}</span>
+                <span style="font-size:0.95rem;color:#666;">환승 {route['transfers']}회</span>
+            </div>
+            <div style="font-size:1.1rem;color:#333;margin-bottom:4px;">{type_icon} {route['summary']}</div>
+            <div style="font-size:0.9rem;color:#666;margin-bottom:12px;">💰 {payment:,}원 · 🚶 도보 {total_walk}m</div>
+            <div style="background:rgba(0,47,108,0.06);border-radius:10px;padding:10px 14px;">
+                <span style="font-size:1rem;font-weight:700;color:{NAVY};">🚌 {route['low_floor_bus_no']}</span>
+            </div>
+        </div>
+        ''',
         unsafe_allow_html=True,
     )
-
-    if st.button("이 경로로 안내받기 →", key=f"{key_prefix}_route_{route['id']}", use_container_width=True):
-        st.session_state["selected_route_id"] = route["id"]
+    if st.button(
+        "이 경로로 안내받기 →",
+        key=f"{key_prefix}_route_{route_id}",
+        use_container_width=True,
+        type="primary",
+    ):
+        st.session_state["selected_route_id"] = route_id
         st.session_state["odsay_routes"] = st.session_state.get("odsay_routes", [])
         st.switch_page("pages/2_경로_상세.py")

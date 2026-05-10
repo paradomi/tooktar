@@ -11,15 +11,63 @@ FONT_SIZE_PRESETS = {
 }
 
 
+_BASE_FONT_PX = {"작게": 14, "보통": 16, "크게": 19, "매우 크게": 22}
+
+
 def apply_global_styles():
-    level = st.session_state.get("font_size_level", "보통")
-    f = FONT_SIZE_PRESETS.get(level, FONT_SIZE_PRESETS["보통"])
+    level = st.session_state.get("font_size_level", "크게")
+    f = FONT_SIZE_PRESETS.get(level, FONT_SIZE_PRESETS["크게"])
+    base_px = _BASE_FONT_PX.get(level, 16)
 
     st.markdown(f"""
     <style>
+        /* 폰트: Gowun Batang (한글 명조) */
+        @import url('https://fonts.googleapis.com/css2?family=Gowun+Batang:wght@400;700&display=swap');
+
+        /* 베이스 폰트 크기 — 모든 rem 단위가 이 값을 참조하여 자동 스케일 */
+        html {{ font-size: {base_px}px !important; }}
+
+        /* 본문/입력은 Gowun Batang. span/div는 제외해서 Material Icons span을 망가뜨리지 않음.
+           div는 body 상속으로 자동 적용됨. */
+        html, body, [class*="css"], [data-testid="stApp"], [data-testid="stAppViewContainer"],
+        .stMarkdown, .stText, .stButton button, .stFormSubmitButton button,
+        input, textarea, select, label,
+        h1, h2, h3, h4, h5, h6, p, a {{
+            font-family: 'Gowun Batang', 'Noto Serif KR', serif !important;
+        }}
+
+        /* Expander 화살표 — testid 정확 매칭만으로 ▼/▲ 텍스트 대체 */
+        [data-testid="stExpanderToggleIcon"],
+        [data-testid="stExpanderHeaderToggleIcon"] {{
+            font-size: 0 !important;
+            color: transparent !important;
+            width: 18px !important;
+            height: 18px !important;
+            position: relative !important;
+            display: inline-flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+        }}
+        [data-testid="stExpanderToggleIcon"]::before,
+        [data-testid="stExpanderHeaderToggleIcon"]::before {{
+            content: "▼" !important;
+            font-size: 12px !important;
+            color: #444 !important;
+            font-family: 'Gowun Batang', sans-serif !important;
+            display: inline-block !important;
+        }}
+        [data-testid="stExpander"] details[open] [data-testid="stExpanderToggleIcon"]::before,
+        [data-testid="stExpander"] details[open] [data-testid="stExpanderHeaderToggleIcon"]::before {{
+            content: "▲" !important;
+        }}
+
         /* 기본 사이드바 및 토글 버튼 완전히 숨기기 */
         [data-testid="collapsedControl"] {{ display: none !important; }}
         [data-testid="stSidebarNav"] {{ display: none !important; }}
+        [data-testid="stSidebarCollapseControl"] {{ display: none !important; }}
+        [data-testid="stSidebarCollapsedControl"] {{ display: none !important; }}
+        button[kind="header"] {{ display: none !important; }}
+        [data-testid="stSidebar"] {{ display: none !important; }}
         
         /* 모바일 앱 느낌의 좁은 레이아웃 */
         .main .block-container {{

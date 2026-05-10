@@ -1,41 +1,29 @@
 # 툭 타 (Took-Tah) - 교통약자 전용 대중교통 앱
 
 ## 프로젝트 개요
-- 교통약자(휠체어, 유모차, 고령자)를 위한 배리어프리 대중교통 안내 웹앱
-- Streamlit + Python 기반, 발표용 프로토타입
+- 교통약자(휠체어, 유모차, 고령자, 시각장애인)를 위한 배리어프리 대중교통 안내 웹앱
+- Streamlit + Python 기반, 발표용 프로토타입 (Level 3)
 - 배포: Streamlit Community Cloud (https://github.com/paradomi/onetouch)
 
 ## 기술 스택
 - Python 3.11, Streamlit
+- 공공 API: 경기도 버스도착정보, 경기도 버스노선정보 (data.go.kr)
+- ODsay 대중교통 길찾기 API, 카카오맵 JS SDK
+- AI 브리핑: Google Gemini 2.5 Flash (예정)
 - 환경변수: .env 파일 (절대 커밋하지 말 것)
 
-## 디렉토리 구조
-onetouch/
-├── app.py              # 메인 홈/검색 화면
-├── pages/
-│   ├── 1_경로_탐색.py    # 경로 리스트 화면
-│   └── 2_경로_상세.py    # 경로 상세 + AI 브리핑
-├── components/
-│   ├── header.py       # 앱 헤더
-│   ├── route_card.py   # 경로 카드 컴포넌트
-│   └── styles.py       # 글로벌 CSS 스타일
-├── data/
-│   └── dummy_data.py   # 더미 JSON 데이터
-├── .env                # API 키 (gitignore 대상)
-├── .gitignore
-└── requirements.txt
 ## 핵심 설계 원칙
 - 모든 터치 영역 최소 48x48dp, 글자 크기 18px 이상
 - 고대비 색상, 메인 컬러 #1f77b4
 - session_state 키 규칙: 위젯용은 _input 접미사, 데이터 전달용은 selected_ 접두사
-- 저상버스 필터링은 lowPlate 필드 사용
+- 카카오맵 교통약자 탭은 API 비공개 → KRIC/서울교통공사 공공데이터로 대체
+- 저상버스 필터링은 경기도 API의 lowPlate 필드 사용
 
 ## 주의사항
 - .env 파일 절대 git에 커밋하지 말 것
 - Streamlit Cloud 배포 시 secrets는 st.secrets로 읽기
 - 공공 API 응답이 XML일 수 있음, format=json 파라미터 확인
 - git push 전 반드시 git status로 .env 포함 여부 확인
-
 
 ## 코딩 규칙
 
@@ -98,11 +86,6 @@ onetouch/
 - 주소 → 좌표: https://dapi.kakao.com/v2/local/search/address
 - 키워드 검색: https://dapi.kakao.com/v2/local/search/keyword
 - 헤더: Authorization: KakaoAK {REST_API_KEY}
-
-## 작업 방식 규칙
-- 작업 시작 전, 필요한 정보가 있으면 사용자에게 먼저 질문한다
-- 실제 코드 수정/실행 전에 간결한 작업 계획을 먼저 제시하고, 사용자 승인을 받은 후 실행한다
-- 계획은 3~5줄 이내로 핵심만 작성한다
 
 ## 자주 하는 실수 방지
 - Streamlit은 버튼 클릭 시 전체 스크립트가 재실행됨. 무거운 API 호출은 @st.cache_data 사용

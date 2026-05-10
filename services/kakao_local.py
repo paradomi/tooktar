@@ -35,6 +35,27 @@ def find_subway_place_id(station_name: str):
     return None
 
 
+def search_places(query: str, size: int = 8):
+    """카카오 로컬 키워드 검색 — 자동완성용.
+
+    Returns:
+        list[dict]: 각 dict에 place_name, address_name, road_address_name, x, y 등.
+                   실패/빈 결과 시 빈 리스트.
+    """
+    api_key = os.getenv("KAKAO_REST_API_KEY", "")
+    if not api_key or not query or not query.strip():
+        return []
+    url = "https://dapi.kakao.com/v2/local/search/keyword.json"
+    headers = {"Authorization": f"KakaoAK {api_key}"}
+    params = {"query": query.strip(), "size": size}
+    try:
+        r = requests.get(url, headers=headers, params=params, timeout=5)
+        data = r.json()
+        return data.get("documents", []) or []
+    except Exception:
+        return []
+
+
 def get_subway_kakao_url(station_name: str):
     """역 이름 → 카카오맵 교통약자 페이지 URL.
 

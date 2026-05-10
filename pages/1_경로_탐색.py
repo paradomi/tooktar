@@ -10,6 +10,8 @@ from components.route_card import render_route_card
 from services.geocode import address_to_coord
 from services.odsay_api import search_pub_trans_path, parse_routes
 
+NAVY = "#002F6C"
+
 st.set_page_config(page_title="경로 탐색", page_icon="🚌", layout="centered")
 
 apply_global_styles()
@@ -35,10 +37,12 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-if st.button("← 뒤로", key="back_home"):
-    st.switch_page("app.py")
+render_header(back_target="app.py")
 
-render_header()
+# 페이지 전환 플래그 처리
+if st.session_state.get("_pending_nav"):
+    target = st.session_state.pop("_pending_nav")
+    st.switch_page(target)
 
 origin_text = st.session_state.get("origin_input", "수원시청")
 destination = st.session_state.get("selected_destination", "")
@@ -51,7 +55,12 @@ if st.session_state.get("_prev_origin") != origin_text:
     st.session_state.pop("origin_coord", None)
     st.session_state["_prev_origin"] = origin_text
 
-st.markdown(f"### 🎯 {origin_text} → {destination}")
+st.markdown(
+    f'<div style="background:rgba(0,47,108,0.06);border-radius:12px;padding:12px 16px;margin-bottom:16px;">'
+    f'<div style="font-size:1.05rem;font-weight:700;color:{NAVY};">🎯 {origin_text} → {destination}</div>'
+    f'</div>',
+    unsafe_allow_html=True,
+)
 
 # ─── ODsay 경로 검색 ───
 routes = []
@@ -142,14 +151,97 @@ else:
 st.write("")
 
 if current_mode == "wheel":
-    # 휠체어 모드: 도보 짧은 순 → 환승 적은 순 → 시간 짧은 순
-    routes = sorted(routes, key=lambda r: (r.get("total_walk", 0), r.get("transfers", 0), r["total_minutes"]))
+    # 휠체어 모드: 정류장 단위 dedup + ThreadPoolExecutor 병렬 + session_state 캐시
+    from services.bus_arrival import get_arrivals as _wheel_get_arrivals
+    from concurrent.futures import ThreadPoolExecutor
+
+    LF_WINDOW_MIN = 30
+
+    def _stop_key(s):
+        return f"gbis_arr_{s.get('start_id')}_{s.get('start_x')}_{s.get('start_y')}"
+
+    def _fetch_arrivals(step):
+        return _wheel_get_arrivals(
+            station_id=step.get("start_id"),
+            lng=step.get("start_x"), lat=step.get("start_y"),
+            city_code_hint=step.get("city_code"),
+        )
+
+    # 모든 bus step 수집 + 정류장별 dedup
+    all_bus_steps = []
+    for r in routes:
+        for s in r.get("steps", []):
+            if s.get("type") == "bus":
+                all_bus_steps.append(s)
+
+    seen_keys = set()
+    to_fetch = []  # 캐시 미보유 정류장만
+    for s in all_bus_steps:
+        k = _stop_key(s)
+        if k in seen_keys:
+            continue
+        seen_keys.add(k)
+        if k not in st.session_state:
+            to_fetch.append((k, s))
+
+    if to_fetch:
+        with st.spinner(f"♿ 저상버스 실시간 도착 정보 확인 중... ({len(to_fetch)}개 정류장)"):
+            with ThreadPoolExecutor(max_workers=6) as ex:
+                results = list(ex.map(lambda x: _fetch_arrivals(x[1]), to_fetch))
+            for (ck, _), res in zip(to_fetch, results):
+                st.session_state[ck] = res or []
+
+    def _route_lf_score(route):
+        rid = route.get("id", 0)
+        score_ck = f"route_lf_score_v2_{cache_key}_{rid}"
+        if score_ck in st.session_state:
+            return st.session_state[score_ck]
+        bus_steps = [s for s in route.get("steps", []) if s.get("type") == "bus"]
+        if not bus_steps:
+            st.session_state[score_ck] = None
+            return None
+        ok = 0
+        for s in bus_steps:
+            bus_no = s.get("bus_no", "")
+            arrivals = st.session_state.get(_stop_key(s), [])
+            for a in arrivals or []:
+                if a.get("route_name") != bus_no:
+                    continue
+                for p in a.get("predictions", []):
+                    m = p.get("minutes")
+                    if p.get("low_floor") and m is not None and m <= LF_WINDOW_MIN:
+                        ok += 1
+                        break
+                else:
+                    continue
+                break
+        score = ok / len(bus_steps)
+        st.session_state[score_ck] = score
+        return score
+
+    scored = [(r, _route_lf_score(r)) for r in routes]
+
+    # bus 없는 경로(score=None)는 저상 이슈 없음 → 1.0 동급으로 정렬
+    scored.sort(key=lambda x: (
+        -(x[1] if x[1] is not None else 1.0),  # 저상 점수 내림차순
+        x[0].get("total_walk", 0),              # 도보 짧은 순
+        x[0].get("transfers", 0),               # 환승 적은 순
+        x[0]["total_minutes"],                  # 시간 짧은 순
+    ))
+    routes_with_scores = scored
+
+    # bus 있는 경로 중 100% 미달 케이스가 있으면 안내
+    bus_routes_scores = [s for r, s in scored if s is not None]
+    if bus_routes_scores and max(bus_routes_scores) < 1.0:
+        st.info("⚠️ 30분 이내 저상버스가 도착하는 경로가 제한적입니다. 위쪽 경로일수록 휠체어 친화도가 높습니다.")
 elif current_mode == "walk_less":
     # 덜 걷는 길: 도보 짧은 순 → 시간 짧은 순
     routes = sorted(routes, key=lambda r: (r.get("total_walk", 0), r["total_minutes"]))
+    routes_with_scores = [(r, None) for r in routes]
 else:
     # 빠른 길: 시간 짧은 순
     routes = sorted(routes, key=lambda r: r["total_minutes"])
+    routes_with_scores = [(r, None) for r in routes]
 
-for route in routes:
-    render_route_card(route, key_prefix=f"route_{current_mode}")
+for route, score in routes_with_scores:
+    render_route_card(route, key_prefix=f"route_{current_mode}", lf_score=score)

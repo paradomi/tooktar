@@ -83,7 +83,9 @@ def parse_path_to_steps(path_info: dict) -> list[dict]:
             start_name = sp.get("startName", "")
             end_name = sp.get("endName", "")
             station_count = sp.get("stationCount", 0)
-            is_low_floor = bus_type in [1, 4]
+            # ODsay bus_type은 버스 종류(시내/직행좌석/마을) 코드라 저상 여부를 알 수 없음
+            # 저상 여부는 GBIS 실시간 도착정보의 lowPlate 필드로만 판별 가능
+            is_low_floor = False
             steps.append({
                 "step": len(steps) + 1,
                 "type": "bus",

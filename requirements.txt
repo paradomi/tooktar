@@ -5,4 +5,4 @@ python-dotenv
 folium
 streamlit-folium
 fastapi
-uvicorn[standard]
+uvicorn[standard]streamlit-searchbox
