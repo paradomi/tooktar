@@ -819,6 +819,10 @@ if station_names:
         st.info("이 경로의 지하철역 교통약자 정보를 불러올 수 없습니다.")
 else:
     st.info("이 경로에는 지하철 구간이 없습니다.")
+    
+    import streamlit as st
+st.write(f"API 상태 코드: {response.status_code}") 
+st.write(f"API 응답 내용: {response.text}")
 
 st.write("---")
 
