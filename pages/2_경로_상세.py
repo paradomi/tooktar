@@ -866,9 +866,10 @@ kakao.maps.load(function() {{
   }}).open(map, new kakao.maps.Marker({{ map: map, position: endPos }}));
 
   // 현재 위치 파란 점 (GPS 권한 허용 시)
+  var myMarker = null;
   if ({_has_gps}) {{
     var myPos = new kakao.maps.LatLng({_my_lat_js}, {_my_lng_js});
-    new kakao.maps.CustomOverlay({{
+    myMarker = new kakao.maps.CustomOverlay({{
       map: map, position: myPos,
       content: '<div class="my-loc-marker"><div class="ring"></div><div class="dot"></div></div>',
       yAnchor: 0.5, xAnchor: 0.5, zIndex: 100
@@ -877,6 +878,26 @@ kakao.maps.load(function() {{
   }}
 
   map.setBounds(bounds, 80);
+
+  // 실시간 위치 추적 (watchPosition)
+  if (navigator.geolocation && navigator.geolocation.watchPosition) {{
+    navigator.geolocation.watchPosition(
+      function(pos) {{
+        var newPos = new kakao.maps.LatLng(pos.coords.latitude, pos.coords.longitude);
+        if (myMarker) {{
+          myMarker.setPosition(newPos);
+        }} else {{
+          myMarker = new kakao.maps.CustomOverlay({{
+            map: map, position: newPos,
+            content: '<div class="my-loc-marker"><div class="ring"></div><div class="dot"></div></div>',
+            yAnchor: 0.5, xAnchor: 0.5, zIndex: 100
+          }});
+        }}
+      }},
+      function(err) {{ /* 권한 거부/실패 — 조용히 무시 */ }},
+      {{ enableHighAccuracy: true, maximumAge: 3000, timeout: 15000 }}
+    );
+  }}
 }});
 </script>
 </body></html>"""
@@ -887,7 +908,15 @@ map_file = os.path.join(static_dir, "map.html")
 with open(map_file, "w", encoding="utf-8") as f:
     f.write(kakao_map_html)
 
-components.iframe("app/static/map.html", height=470, scrolling=False)
+# components.iframe은 allow 속성 노출이 안 돼서 직접 HTML로 iframe 작성
+# (geolocation API는 iframe에서 allow="geolocation" 명시 필요)
+st.markdown(
+    '<iframe src="./app/static/map.html" allow="geolocation" '
+    'width="100%" height="470" '
+    'style="border:0;border-radius:16px;display:block;" '
+    'frameborder="0"></iframe>',
+    unsafe_allow_html=True,
+)
 
 _walk_legend = (
     '<span>🟪 <b>도보 (계단 제외)</b></span>'
