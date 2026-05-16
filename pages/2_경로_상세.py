@@ -31,8 +31,8 @@ apply_global_styles()
 
 st.markdown("""
 <style>
-/* 상세 페이지는 컨텐츠가 많아 메인보다 넓게 */
-.main .block-container { max-width: 760px !important; }
+/* 상세 페이지는 컨텐츠가 많지만 글로벌 max-width(1080px) 그대로 사용 */
+.main .block-container { max-width: 1080px !important; }
 
 [data-testid="stMain"] [data-testid="stTabs"] button[role="tab"] p {
     font-size: 1.6rem;

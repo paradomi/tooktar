@@ -69,9 +69,9 @@ def apply_global_styles():
         button[kind="header"] {{ display: none !important; }}
         [data-testid="stSidebar"] {{ display: none !important; }}
         
-        /* 모바일 앱 느낌의 좁은 레이아웃 */
+        /* 모바일 포트레이트 레이아웃 (1080×1920 기준) */
         .main .block-container {{
-            max-width: 480px;
+            max-width: 1080px;
             padding-top: 1rem;
             padding-bottom: 2rem;
         }}
