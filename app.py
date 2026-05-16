@@ -139,11 +139,11 @@ with _settings_cols[0]:
     if st.button("⚙️ 설정", key="home_to_settings", use_container_width=True):
         st.switch_page("pages/3_설정.py")
 
-# ─── 로고 (텍스트, 글자 크기 설정 무관 고정) ───
+# ─── 로고 (텍스트, viewport 반응형) ───
 st.markdown(
-    f'<div style="text-align:center;margin:32px 0 24px 0;font-family:\'Gowun Batang\',serif;">'
-    f'<div style="font-size:96px;font-weight:700;color:{NAVY};letter-spacing:0.2em;line-height:1;">툭   타</div>'
-    f'<div style="font-size:20px;color:#555;margin-top:20px;letter-spacing:0.05em;">" 이동의 장벽을 툭, 넘다. "</div>'
+    f'<div style="text-align:center;margin:24px 0 16px 0;font-family:\'Gowun Batang\',serif;">'
+    f'<div style="font-size:clamp(48px, 14vw, 96px);font-weight:700;color:{NAVY};letter-spacing:0.15em;line-height:1;">툭 타</div>'
+    f'<div style="font-size:clamp(13px, 3.5vw, 20px);color:#555;margin-top:12px;letter-spacing:0.05em;">" 이동의 장벽을 툭, 넘다. "</div>'
     f'</div>',
     unsafe_allow_html=True,
 )
@@ -279,14 +279,11 @@ else:
     # MUI 카드 시각 효과는 CSS 인젝션으로 보강
     st.markdown(f"""
     <style>
-    /* st.columns(2) 모바일에서도 2컬럼 유지 (기본 collapse 차단) */
+    /* st.columns 모바일에서도 가로 배치 유지 (collapse 차단), 비율은 streamlit 기본 유지 */
     [data-testid="stMain"] [data-testid="stHorizontalBlock"] {{
         flex-wrap: nowrap !important;
-        gap: 0.75rem !important;
     }}
     [data-testid="stMain"] [data-testid="stHorizontalBlock"] > [data-testid="stColumn"] {{
-        width: calc(50% - 0.375rem) !important;
-        flex: 1 1 calc(50% - 0.375rem) !important;
         min-width: 0 !important;
     }}
     [data-testid="stMain"] [data-testid="stButton"] > button[kind="secondary"]:has(strong) {{
