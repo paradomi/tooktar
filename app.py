@@ -34,60 +34,6 @@ st.set_page_config(
 
 apply_global_styles()
 
-# ─── 자주가는곳 URL 쿼리 파라미터 처리 (SortableJS iframe → top frame 액션) ───
-_qp = st.query_params
-if "fav_act" in _qp:
-    _act = _qp["fav_act"]
-    _favs_qp = st.session_state.get("favorite_places", [])
-    if _act == "reorder":
-        try:
-            _new_idx = [int(x) for x in _qp["order"].split(",")]
-            if sorted(_new_idx) == list(range(len(_favs_qp))):
-                st.session_state["favorite_places"] = [_favs_qp[i] for i in _new_idx]
-        except (ValueError, KeyError):
-            pass
-    elif _act == "delete":
-        try:
-            _i = int(_qp["idx"])
-            if 0 <= _i < len(_favs_qp):
-                _favs_qp.pop(_i)
-                st.session_state["favorite_places"] = _favs_qp
-        except (ValueError, KeyError):
-            pass
-    elif _act == "edit":
-        try:
-            _i = int(_qp["idx"])
-            _new_label = _qp.get("label", "")
-            _new_icon = _qp.get("icon", "")
-            _new_address = _qp.get("address", "")
-            if 0 <= _i < len(_favs_qp):
-                if _new_label:
-                    _favs_qp[_i]["label"] = _new_label
-                if _new_icon:
-                    _favs_qp[_i]["icon"] = _new_icon
-                if _new_address and _new_address != _favs_qp[_i].get("address", ""):
-                    # 카카오 geocode로 좌표 재조회
-                    from services.geocode import address_to_coord as _addr_to_coord
-                    _geo = _addr_to_coord(_new_address)
-                    if _geo:
-                        _favs_qp[_i]["address"] = _new_address
-                        _favs_qp[_i]["lng"] = _geo["lng"]
-                        _favs_qp[_i]["lat"] = _geo["lat"]
-                    else:
-                        # 실패 메시지 저장 (다음 페이지에서 표시)
-                        st.session_state["_fav_edit_error"] = (
-                            f"⚠️ '{_new_address}' 주소를 찾을 수 없어 좌표 업데이트에 실패했습니다. "
-                            f"다른 주소로 다시 시도해주세요."
-                        )
-                st.session_state["favorite_places"] = _favs_qp
-        except (ValueError, KeyError):
-            pass
-    # 쿼리 파라미터 정리 (무한 루프 방지)
-    st.query_params.clear()
-    # 액션 처리 후 편집 모드 유지
-    st.session_state["edit_fav"] = True
-    st.rerun()
-
 # Streamlit 기본 헤더 숨김 + 네이비 테마 일관 디자인
 st.markdown(f"""
 <style>
@@ -202,10 +148,6 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# 자주가는곳 편집 에러 메시지 (주소 geocoding 실패 등)
-if "_fav_edit_error" in st.session_state:
-    st.error(st.session_state.pop("_fav_edit_error"))
-
 # ─── 자주 가는 곳 헤더 + 편집 토글 (streamlit) ───
 _fav_left, _fav_right = st.columns([4, 1])
 with _fav_left:
@@ -268,183 +210,150 @@ if st.session_state.get("edit_fav", False):
             st.rerun()
 
     st.write("")
+    st.markdown(
+        f'<div style="font-size:1.1rem;font-weight:700;color:{NAVY};margin-bottom:8px;">'
+        f'📋 저장된 장소</div>',
+        unsafe_allow_html=True,
+    )
 
-    # ── SortableJS 기반 드래그 + 인라인 편집/삭제 ──
-    _FAV_HTML_TEMPLATE = """<!DOCTYPE html>
-<html>
-<head>
-<meta charset="utf-8">
-<link href="https://fonts.googleapis.com/css2?family=Gowun+Batang:wght@400;700&display=swap" rel="stylesheet">
-<script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js"></script>
-<style>
-body { margin: 0; padding: 4px; font-family: 'Gowun Batang', 'Noto Serif KR', serif; background: white; }
-#list { list-style: none; padding: 0; margin: 0; }
-.row {
-  display: flex; align-items: center; gap: 10px;
-  padding: 12px 14px; margin-bottom: 8px;
-  background: white; border: 2px solid #002F6C; border-radius: 12px;
-  min-height: 56px; box-sizing: border-box;
-}
-.row.dragging { opacity: 0.6; transform: scale(0.98); }
-.icon { font-size: 1.6rem; flex-shrink: 0; }
-.info { flex: 1; min-width: 0; overflow: hidden; }
-.info .lbl { font-weight: 700; color: #002F6C; font-size: 1.05rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.info .addr { font-size: 0.85rem; color: #666; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.actions { display: flex; gap: 6px; flex-shrink: 0; align-items: center; }
-.actions button {
-  width: 36px; height: 36px; border: none; background: rgba(0,47,108,0.08);
-  border-radius: 8px; cursor: pointer; font-size: 1rem; padding: 0;
-}
-.actions button:hover { background: rgba(0,47,108,0.18); }
-.handle { cursor: grab; color: #888; user-select: none; font-size: 1.4rem; padding: 0 4px; line-height: 1; }
-.handle:active { cursor: grabbing; }
-.row.editing { background: #FFF8E1; border-color: #FFA726; }
-.edit-form { display: flex; gap: 6px; flex: 1; flex-wrap: wrap; align-items: center; }
-.edit-form input { padding: 6px 10px; border: 1px solid #ccc; border-radius: 6px; font-size: 0.95rem; font-family: inherit; }
-.edit-form .icon-input { width: 50px; text-align: center; }
-.edit-form .label-input { flex: 0 0 100px; min-width: 80px; }
-.edit-form .address-input { flex: 1 1 100%; min-width: 0; }
-.save-btn, .cancel-btn { padding: 6px 10px; border: none; border-radius: 6px; cursor: pointer; font-size: 0.95rem; font-family: inherit; white-space: nowrap; }
-.save-btn { background: #002F6C; color: white; }
-.cancel-btn { background: #ccc; color: #333; }
-</style>
-</head>
-<body>
-<ul id="list">
-__ROWS__
-</ul>
-<script>
-const list = document.getElementById('list');
-Sortable.create(list, {
-  handle: '.handle',
-  animation: 150,
-  chosenClass: 'dragging',
-  onEnd: function() {
-    const order = Array.from(list.children).map(function(li) { return li.dataset.origIdx; });
-    navigateTo({fav_act: 'reorder', order: order.join(',')});
-  }
-});
+    # ── Streamlit 네이티브 인라인 편집/삭제/순서변경 ──
+    # 편집 모드(개별 항목): session_state["_editing_idx"]
+    _editing_idx = st.session_state.get("_editing_idx", None)
 
-function deleteItem(idx) {
-  if (!confirm('삭제할까요?')) return;
-  navigateTo({fav_act: 'delete', idx: String(idx)});
-}
+    # 행별 컴팩트 스타일
+    st.markdown(f"""
+    <style>
+    [data-testid="stMain"] [data-testid="stHorizontalBlock"] {{
+        flex-wrap: nowrap !important;
+        gap: 4px !important;
+        align-items: center !important;
+    }}
+    [data-testid="stMain"] [data-testid="stHorizontalBlock"] > [data-testid="stColumn"] {{
+        min-width: 0 !important;
+    }}
+    div[data-testid="stButton"] button[kind="secondary"]:not(:has(strong)) {{
+        min-height: 44px !important;
+        height: 44px !important;
+        padding: 0 !important;
+        border-radius: 8px !important;
+        border-width: 1px !important;
+    }}
+    .fav-row {{
+        background: white;
+        border: 1.5px solid {NAVY};
+        border-radius: 10px;
+        padding: 10px 14px;
+        height: 44px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        overflow: hidden;
+        font-family: 'Gowun Batang','Noto Serif KR',serif;
+    }}
+    .fav-row .ico {{ font-size: 1.3rem; flex-shrink: 0; }}
+    .fav-row .info {{ flex: 1; min-width: 0; overflow: hidden; }}
+    .fav-row .lbl {{ font-weight: 700; color: {NAVY}; font-size: 0.95rem; line-height: 1.1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
+    .fav-row .addr {{ font-size: 0.78rem; color: #777; line-height: 1.1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
+    </style>
+    """, unsafe_allow_html=True)
 
-function startEdit(idx) {
-  document.querySelectorAll('.row').forEach(function(r) { r.classList.remove('editing'); });
-  document.querySelectorAll('.edit-form').forEach(function(f) { f.remove(); });
-  document.querySelectorAll('.normal-view').forEach(function(v) { v.style.display = ''; });
-  const row = document.querySelector('li[data-orig-idx="' + idx + '"]');
-  if (!row) return;
-  row.classList.add('editing');
-  const nv = row.querySelector('.normal-view');
-  if (nv) nv.style.display = 'none';
-  const currentLabel = row.dataset.label;
-  const currentIcon = row.dataset.icon;
-  const currentAddress = row.dataset.address || '';
-  const form = document.createElement('div');
-  form.className = 'edit-form';
-  form.innerHTML = '<input class="icon-input" maxlength="3" value="' + currentIcon + '" title="아이콘">'
-    + '<input class="label-input" value="' + currentLabel + '" placeholder="이름">'
-    + '<button class="save-btn">저장</button>'
-    + '<button class="cancel-btn">취소</button>'
-    + '<input class="address-input" value="' + currentAddress.replace(/"/g, '&quot;') + '" placeholder="주소 (예: 수원시청, 아주대학교병원)">';
-  const actionsEl = row.querySelector('.actions');
-  row.insertBefore(form, actionsEl);
-  form.querySelector('.save-btn').addEventListener('click', function() {
-    const newLabel = form.querySelector('.label-input').value.trim();
-    const newIcon = form.querySelector('.icon-input').value.trim();
-    const newAddress = form.querySelector('.address-input').value.trim();
-    if (!newLabel) { alert('이름을 입력해주세요.'); return; }
-    if (!newAddress) { alert('주소를 입력해주세요.'); return; }
-    navigateTo({fav_act: 'edit', idx: String(idx), label: newLabel, icon: newIcon, address: newAddress});
-  });
-  form.querySelector('.cancel-btn').addEventListener('click', function() {
-    row.classList.remove('editing');
-    if (nv) nv.style.display = '';
-    form.remove();
-  });
-}
+    favs = favorites
+    for idx, place in enumerate(favs):
+        if _editing_idx == idx:
+            # ── 인라인 편집 폼 ──
+            with st.container(border=True):
+                _e_cols = st.columns([1, 3])
+                with _e_cols[0]:
+                    _new_icon = st.selectbox(
+                        "아이콘",
+                        icon_options,
+                        index=icon_options.index(place["icon"]) if place["icon"] in icon_options else 0,
+                        key=f"edit_icon_{idx}",
+                        label_visibility="collapsed",
+                    )
+                with _e_cols[1]:
+                    _new_label = st.text_input(
+                        "이름",
+                        value=place["label"],
+                        key=f"edit_label_{idx}",
+                        label_visibility="collapsed",
+                        placeholder="장소 이름",
+                    )
+                # 주소: 자동완성 searchbox
+                _new_place = st_searchbox(
+                    _place_search,
+                    placeholder=f"🔍 주소 (현재: {place['address']})",
+                    key=f"edit_addr_{idx}",
+                )
+                if _new_place:
+                    _preview = (
+                        _new_place.get("road_address_name")
+                        or _new_place.get("address_name", "")
+                    )
+                    st.caption(f"📍 새 주소: **{_new_place.get('place_name','')}** — {_preview}")
+                _btn_cols = st.columns([1, 1])
+                with _btn_cols[0]:
+                    if st.button("✅ 저장", key=f"save_{idx}", use_container_width=True, type="primary"):
+                        if not _new_label:
+                            st.error("이름을 입력해주세요.")
+                        else:
+                            favs[idx]["icon"] = _new_icon
+                            favs[idx]["label"] = _new_label
+                            if _new_place:
+                                favs[idx]["address"] = _new_place.get("place_name", place["address"])
+                                try:
+                                    favs[idx]["lng"] = float(_new_place["x"])
+                                    favs[idx]["lat"] = float(_new_place["y"])
+                                except (KeyError, TypeError, ValueError):
+                                    pass
+                            st.session_state["favorite_places"] = favs
+                            st.session_state.pop("_editing_idx", None)
+                            st.rerun()
+                with _btn_cols[1]:
+                    if st.button("✕ 취소", key=f"cancel_{idx}", use_container_width=True):
+                        st.session_state.pop("_editing_idx", None)
+                        st.rerun()
+        else:
+            # ── 일반 행: 아이콘+이름+주소 | ⬆ | ⬇ | ✏️ | 🗑 ──
+            _row_cols = st.columns([8, 1, 1, 1, 1])
+            with _row_cols[0]:
+                _lbl_safe = (place.get("label") or "").replace("<", "&lt;")
+                _addr_safe = (place.get("address") or "").replace("<", "&lt;")
+                _ico_safe = place.get("icon", "")
+                st.markdown(
+                    f'<div class="fav-row">'
+                    f'<span class="ico">{_ico_safe}</span>'
+                    f'<div class="info">'
+                    f'<div class="lbl">{_lbl_safe}</div>'
+                    f'<div class="addr">{_addr_safe}</div>'
+                    f'</div></div>',
+                    unsafe_allow_html=True,
+                )
+            with _row_cols[1]:
+                if idx > 0 and st.button("⬆", key=f"up_{idx}", use_container_width=True):
+                    favs[idx - 1], favs[idx] = favs[idx], favs[idx - 1]
+                    st.session_state["favorite_places"] = favs
+                    st.rerun()
+                elif idx == 0:
+                    st.markdown("&nbsp;", unsafe_allow_html=True)
+            with _row_cols[2]:
+                if idx < len(favs) - 1 and st.button("⬇", key=f"down_{idx}", use_container_width=True):
+                    favs[idx], favs[idx + 1] = favs[idx + 1], favs[idx]
+                    st.session_state["favorite_places"] = favs
+                    st.rerun()
+                elif idx == len(favs) - 1:
+                    st.markdown("&nbsp;", unsafe_allow_html=True)
+            with _row_cols[3]:
+                if st.button("✏️", key=f"edit_{idx}", use_container_width=True):
+                    st.session_state["_editing_idx"] = idx
+                    st.rerun()
+            with _row_cols[4]:
+                if st.button("🗑", key=f"del_{idx}", use_container_width=True):
+                    favs.pop(idx)
+                    st.session_state["favorite_places"] = favs
+                    st.session_state.pop("_editing_idx", None)
+                    st.rerun()
 
-function navigateTo(params) {
-  // iframe sandbox(allow-top-navigation 없음) 때문에 직접 top navigation 불가.
-  // allow-popups-to-escape-sandbox 활용: 팝업을 열어 sandbox 벗어난 후 거기서 opener.top 조작
-  let targetUrl;
-  try {
-    const url = new URL(window.top.location.href);
-    Object.keys(params).forEach(function(k) { url.searchParams.set(k, params[k]); });
-    targetUrl = url.toString();
-  } catch(err) {
-    targetUrl = window.location.pathname + '?' +
-      Object.keys(params).map(function(k) {
-        return encodeURIComponent(k) + '=' + encodeURIComponent(params[k]);
-      }).join('&');
-  }
-
-  try {
-    const popup = window.open('', '_blank', 'width=1,height=1,left=-1000,top=-1000');
-    if (popup) {
-      popup.document.write(
-        '<!DOCTYPE html><html><body><script>' +
-        'try { window.opener.top.location.href = ' + JSON.stringify(targetUrl) + '; } ' +
-        'catch(e) { window.opener.location.href = ' + JSON.stringify(targetUrl) + '; }' +
-        'window.close();' +
-        '<' + '/script></body></html>'
-      );
-      return;
-    }
-  } catch(err) {}
-
-  // 최후 fallback: top 직접 시도 (대부분 sandbox에 막힘)
-  try {
-    const a = document.createElement('a');
-    a.target = '_top';
-    a.href = targetUrl;
-    a.style.display = 'none';
-    document.body.appendChild(a);
-    a.click();
-  } catch(e) {
-    const f = document.createElement('form');
-    f.method = 'GET';
-    f.target = '_top';
-    f.action = window.location.pathname;
-    Object.keys(params).forEach(function(k) {
-      const inp = document.createElement('input');
-      inp.type = 'hidden'; inp.name = k; inp.value = params[k];
-      f.appendChild(inp);
-    });
-    document.body.appendChild(f);
-    f.submit();
-  }
-}
-</script>
-</body>
-</html>"""
-
-    _rows_html = []
-    for _i, _p in enumerate(favorites):
-        _lbl = (_p.get("label") or "").replace("&", "&amp;").replace('"', "&quot;").replace("<", "&lt;")
-        _addr = (_p.get("address") or "").replace("&", "&amp;").replace('"', "&quot;").replace("<", "&lt;")
-        _ico = (_p.get("icon") or "").replace('"', "&quot;")
-        _rows_html.append(
-            f'<li class="row" data-orig-idx="{_i}" data-label="{_lbl}" data-icon="{_ico}" data-address="{_addr}">'
-            f'<div class="normal-view" style="display:flex;align-items:center;gap:10px;flex:1;min-width:0;">'
-            f'<span class="icon">{_ico}</span>'
-            f'<div class="info"><div class="lbl">{_lbl}</div><div class="addr">{_addr}</div></div>'
-            f'</div>'
-            f'<div class="actions">'
-            f'<button onclick="startEdit({_i})" title="편집">✏️</button>'
-            f'<button onclick="deleteItem({_i})" title="삭제">🗑</button>'
-            f'<span class="handle" title="드래그하여 순서 변경">&#8801;</span>'
-            f'</div>'
-            f'</li>'
-        )
-
-    _full_html = _FAV_HTML_TEMPLATE.replace("__ROWS__", "\n".join(_rows_html))
-    _h = max(200, 60 + 80 * len(favorites))
-    _components.html(_full_html, height=_h, scrolling=False)
-
-    st.caption("✏️ 편집은 이름과 아이콘만 가능합니다. 주소 변경은 삭제 후 재추가하세요.")
 
 else:
     # ── 일반 모드: streamlit 버튼 그리드 (정사각형, NAVY 테두리) ──
