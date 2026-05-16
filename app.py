@@ -379,8 +379,33 @@ else:
                 else:
                     st.session_state.pop("dest_coord", None)
                 st.session_state["_prev_destination"] = addr
-                # 출발지: origin_* 필드가 있으면 그걸로, 없으면 DEFAULT_ORIGIN
-                if "origin_lng" in place and "origin_lat" in place:
+                # 출발지 우선순위:
+                #   1) 실시간 GPS (gps_coord)
+                #   2) place의 origin_* 필드
+                #   3) DEFAULT_ORIGIN
+                _gps_fix = st.session_state.get("gps_coord")
+                if _gps_fix and _gps_fix.get("lat") is not None and _gps_fix.get("lng") is not None:
+                    # GPS 좌표 → reverse geocode로 이름 만들기 (캐시 활용)
+                    _gps_lat = float(_gps_fix["lat"])
+                    _gps_lng = float(_gps_fix["lng"])
+                    _gps_ck2 = f"gps_addr_{_gps_lat:.5f}_{_gps_lng:.5f}"
+                    _gps_addr2 = st.session_state.get(_gps_ck2)
+                    if not _gps_addr2:
+                        _gps_addr2 = coord_to_address(_gps_lng, _gps_lat)
+                        st.session_state[_gps_ck2] = _gps_addr2
+                    if _gps_addr2:
+                        st.session_state["origin_coord"] = _gps_addr2
+                        st.session_state["origin_input"] = f"📍 {_gps_addr2['name']}"
+                        st.session_state["_prev_origin"] = st.session_state["origin_input"]
+                    else:
+                        st.session_state["origin_coord"] = {
+                            "name": "현재 위치",
+                            "address": "",
+                            "lng": _gps_lng, "lat": _gps_lat,
+                        }
+                        st.session_state["origin_input"] = "📍 현재 위치"
+                        st.session_state["_prev_origin"] = "📍 현재 위치"
+                elif "origin_lng" in place and "origin_lat" in place:
                     origin_name = place.get("origin_name", "출발지")
                     origin_addr = place.get("origin_address", "")
                     st.session_state["origin_input"] = f"📍 {origin_name}"
