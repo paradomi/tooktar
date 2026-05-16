@@ -741,16 +741,24 @@ dest_lat = dest_coord.get("lat", center_lat)
 dest_lng = dest_coord.get("lng", center_lng)
 
 # 현재 위치 GPS (있으면 지도에 파란 점 마커)
-try:
-    from streamlit_js_eval import get_geolocation as _get_geo
-    _my_loc = _get_geo()
-except Exception:
-    _my_loc = None
+# 우선순위: app.py에서 저장한 session_state["gps_coord"] > 페이지 자체 호출
 _my_lat = _my_lng = None
-if _my_loc and isinstance(_my_loc, dict):
-    _coords = _my_loc.get("coords") or {}
-    _my_lat = _coords.get("latitude")
-    _my_lng = _coords.get("longitude")
+_cached_gps = st.session_state.get("gps_coord")
+if _cached_gps:
+    _my_lat = _cached_gps.get("lat")
+    _my_lng = _cached_gps.get("lng")
+else:
+    try:
+        from streamlit_js_eval import get_geolocation as _get_geo
+        _my_loc = _get_geo()
+        if _my_loc and isinstance(_my_loc, dict):
+            _coords = _my_loc.get("coords") or {}
+            _my_lat = _coords.get("latitude")
+            _my_lng = _coords.get("longitude")
+            if _my_lat is not None and _my_lng is not None:
+                st.session_state["gps_coord"] = {"lat": float(_my_lat), "lng": float(_my_lng)}
+    except Exception:
+        pass
 _has_gps = "true" if (_my_lat is not None and _my_lng is not None) else "false"
 _my_lat_js = _my_lat if _my_lat is not None else 0
 _my_lng_js = _my_lng if _my_lng is not None else 0

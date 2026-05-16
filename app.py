@@ -332,6 +332,8 @@ if _gps_loc and isinstance(_gps_loc, dict):
     _lat = _coords.get("latitude")
     _lng = _coords.get("longitude")
     if _lat is not None and _lng is not None:
+        # 페이지 간 공유용: GPS 원시 좌표 저장 (모든 페이지에서 즉시 사용 가능)
+        st.session_state["gps_coord"] = {"lat": float(_lat), "lng": float(_lng)}
         _gps_ck = f"gps_addr_{_lat:.5f}_{_lng:.5f}"
         if _gps_ck in st.session_state:
             _gps_addr = st.session_state[_gps_ck]
