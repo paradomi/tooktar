@@ -740,6 +740,21 @@ origin_lng = origin_coord.get("lng", center_lng)
 dest_lat = dest_coord.get("lat", center_lat)
 dest_lng = dest_coord.get("lng", center_lng)
 
+# 현재 위치 GPS (있으면 지도에 파란 점 마커)
+try:
+    from streamlit_js_eval import get_geolocation as _get_geo
+    _my_loc = _get_geo()
+except Exception:
+    _my_loc = None
+_my_lat = _my_lng = None
+if _my_loc and isinstance(_my_loc, dict):
+    _coords = _my_loc.get("coords") or {}
+    _my_lat = _coords.get("latitude")
+    _my_lng = _coords.get("longitude")
+_has_gps = "true" if (_my_lat is not None and _my_lng is not None) else "false"
+_my_lat_js = _my_lat if _my_lat is not None else 0
+_my_lng_js = _my_lng if _my_lng is not None else 0
+
 kakao_map_html = f"""<!DOCTYPE html>
 <html><head>
 <meta charset="utf-8">
@@ -747,6 +762,25 @@ kakao_map_html = f"""<!DOCTYPE html>
 <style>
   * {{ margin: 0; padding: 0; }}
   #map {{ width: 100%; height: 450px; border-radius: 16px; }}
+  /* 현재 위치 파란 점 (Google Maps 스타일) */
+  .my-loc-marker {{ position: relative; width: 22px; height: 22px; pointer-events: none; }}
+  .my-loc-marker .ring {{
+    position: absolute; left: 0; top: 0;
+    width: 22px; height: 22px; border-radius: 50%;
+    background: rgba(66,133,244,0.35);
+    animation: tooktah-pulse 2s ease-out infinite;
+  }}
+  .my-loc-marker .dot {{
+    position: absolute; left: 4px; top: 4px;
+    width: 14px; height: 14px;
+    background: #4285F4;
+    border: 2px solid white; border-radius: 50%;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+  }}
+  @keyframes tooktah-pulse {{
+    0%   {{ transform: scale(0.6); opacity: 1; }}
+    100% {{ transform: scale(2.5); opacity: 0; }}
+  }}
 </style>
 </head><body>
 <div id="map"></div>
@@ -822,6 +856,17 @@ kakao.maps.load(function() {{
   new kakao.maps.InfoWindow({{
     content: '<div style="padding:4px 8px;font-size:12px;font-weight:bold;color:#c62828;">\\ud83d\\udccd {dest_name}</div>'
   }}).open(map, new kakao.maps.Marker({{ map: map, position: endPos }}));
+
+  // 현재 위치 파란 점 (GPS 권한 허용 시)
+  if ({_has_gps}) {{
+    var myPos = new kakao.maps.LatLng({_my_lat_js}, {_my_lng_js});
+    new kakao.maps.CustomOverlay({{
+      map: map, position: myPos,
+      content: '<div class="my-loc-marker"><div class="ring"></div><div class="dot"></div></div>',
+      yAnchor: 0.5, xAnchor: 0.5, zIndex: 100
+    }});
+    bounds.extend(myPos);
+  }}
 
   map.setBounds(bounds, 80);
 }});
