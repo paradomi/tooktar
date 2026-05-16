@@ -101,6 +101,8 @@ def parse_path_to_steps(path_info: dict) -> list[dict]:
                 "start_y": sp.get("startY"),
                 "end_x": sp.get("endX"),
                 "end_y": sp.get("endY"),
+                "start_id": sp.get("startID"),
+                "end_id": sp.get("endID"),
             })
         elif traffic_type == 1:
             lane = sp.get("lane", [{}])

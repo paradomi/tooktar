@@ -18,3 +18,6 @@ __pycache__/
 .DS_Store
 .vscode/
 .idea/
+
+# 런타임 데이터 (최근 검색 기록 등)
+data/recent.json

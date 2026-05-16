@@ -150,98 +150,174 @@ else:
 
 st.write("")
 
-if current_mode == "wheel":
-    # 휠체어 모드: 정류장 단위 dedup + ThreadPoolExecutor 병렬 + session_state 캐시
-    from services.bus_arrival import get_arrivals as _wheel_get_arrivals
-    from concurrent.futures import ThreadPoolExecutor
+# ─── 공통: 모든 모드에서 버스 도착 정보 조회 ───
+from services.bus_arrival import get_arrivals as _wheel_get_arrivals
+from services.bus_arrival import has_low_floor_arriving as _wheel_has_lf
+from concurrent.futures import ThreadPoolExecutor
 
-    LF_WINDOW_MIN = 30
+LF_WINDOW_MIN = 30
 
-    def _stop_key(s):
-        return f"gbis_arr_{s.get('start_id')}_{s.get('start_x')}_{s.get('start_y')}"
 
-    def _fetch_arrivals(step):
-        return _wheel_get_arrivals(
-            station_id=step.get("start_id"),
-            lng=step.get("start_x"), lat=step.get("start_y"),
-            city_code_hint=step.get("city_code"),
-        )
+def _stop_key(s):
+    return f"gbis_arr_{s.get('start_id')}_{s.get('start_x')}_{s.get('start_y')}"
 
-    # 모든 bus step 수집 + 정류장별 dedup
-    all_bus_steps = []
-    for r in routes:
-        for s in r.get("steps", []):
-            if s.get("type") == "bus":
-                all_bus_steps.append(s)
 
-    seen_keys = set()
-    to_fetch = []  # 캐시 미보유 정류장만
-    for s in all_bus_steps:
-        k = _stop_key(s)
-        if k in seen_keys:
+def _fetch_arrivals(step):
+    return _wheel_get_arrivals(
+        station_id=step.get("start_id"),
+        lng=step.get("start_x"), lat=step.get("start_y"),
+        city_code_hint=step.get("city_code"),
+        station_name=step.get("start_name", ""),
+    )
+
+
+# 모든 bus step 수집 + 정류장별 dedup (한 번만)
+_all_bus_steps = []
+for r in routes:
+    for s in r.get("steps", []):
+        if s.get("type") == "bus":
+            _all_bus_steps.append(s)
+
+_seen_keys = set()
+_to_fetch = []
+for s in _all_bus_steps:
+    k = _stop_key(s)
+    if k in _seen_keys:
+        continue
+    _seen_keys.add(k)
+    if k not in st.session_state:
+        _to_fetch.append((k, s))
+
+if _to_fetch:
+    _spinner_msg = (
+        f"♿ 저상버스 실시간 도착 정보 확인 중... ({len(_to_fetch)}개 정류장)"
+        if current_mode == "wheel"
+        else f"🚌 버스 실시간 도착 정보 확인 중... ({len(_to_fetch)}개 정류장)"
+    )
+    with st.spinner(_spinner_msg):
+        with ThreadPoolExecutor(max_workers=6) as ex:
+            _results = list(ex.map(lambda x: _fetch_arrivals(x[1]), _to_fetch))
+        for (ck, _), res in zip(_to_fetch, _results):
+            st.session_state[ck] = res or []
+
+
+def _first_bus_arrival(route):
+    """경로의 첫 bus step의 다음 도착 정보."""
+    for s in route.get("steps", []):
+        if s.get("type") != "bus":
             continue
-        seen_keys.add(k)
-        if k not in st.session_state:
-            to_fetch.append((k, s))
+        bus_no = s.get("bus_no", "")
+        arrivals = st.session_state.get(_stop_key(s), [])
+        matched = [a for a in (arrivals or []) if a.get("route_name") == bus_no]
+        if not matched:
+            return None
+        preds = matched[0].get("predictions", [])
+        if not preds:
+            return None
+        p = preds[0]
+        return {
+            "bus_no": bus_no,
+            "minutes": p.get("minutes"),
+            "low_floor": p.get("low_floor", False),
+            "stops_left": p.get("stops_left"),
+        }
+    return None
 
-    if to_fetch:
-        with st.spinner(f"♿ 저상버스 실시간 도착 정보 확인 중... ({len(to_fetch)}개 정류장)"):
-            with ThreadPoolExecutor(max_workers=6) as ex:
-                results = list(ex.map(lambda x: _fetch_arrivals(x[1]), to_fetch))
-            for (ck, _), res in zip(to_fetch, results):
-                st.session_state[ck] = res or []
 
+if current_mode == "wheel":
     def _route_lf_score(route):
         rid = route.get("id", 0)
-        score_ck = f"route_lf_score_v2_{cache_key}_{rid}"
+        score_ck = f"route_lf_score_v3_{cache_key}_{rid}"
         if score_ck in st.session_state:
             return st.session_state[score_ck]
         bus_steps = [s for s in route.get("steps", []) if s.get("type") == "bus"]
         if not bus_steps:
-            st.session_state[score_ck] = None
-            return None
+            st.session_state[score_ck] = "subway_only"
+            return "subway_only"
         ok = 0
+        data_steps = 0  # GBIS 데이터를 받은 step 수
         for s in bus_steps:
             bus_no = s.get("bus_no", "")
             arrivals = st.session_state.get(_stop_key(s), [])
-            for a in arrivals or []:
-                if a.get("route_name") != bus_no:
-                    continue
-                for p in a.get("predictions", []):
+            matched = [a for a in (arrivals or []) if a.get("route_name") == bus_no]
+            has_data = bool(matched and matched[0].get("predictions"))
+            step_ok = False
+            # 1) 도착예정 첫 두 대 중 저상 (LF_WINDOW_MIN 이내)
+            if matched:
+                for p in matched[0].get("predictions", []):
                     m = p.get("minutes")
                     if p.get("low_floor") and m is not None and m <= LF_WINDOW_MIN:
-                        ok += 1
+                        step_ok = True
                         break
+            # 2) 첫 두 대에 저상 없으면 노선 단위 위치 검증
+            if not step_ok and bus_no:
+                lf_ck = f"lf_loc_v3_{s.get('start_id') or 'no'}_{bus_no}"
+                if lf_ck in st.session_state:
+                    step_ok = st.session_state[lf_ck]
                 else:
-                    continue
-                break
-        score = ok / len(bus_steps)
+                    if s.get("start_id"):
+                        step_ok = _wheel_has_lf(s.get("start_id"), bus_no, max_stops_ahead=15)
+                    else:
+                        from services.bus_arrival import has_low_floor_on_route as _route_check
+                        step_ok = _route_check(bus_no)
+                    st.session_state[lf_ck] = step_ok
+                if step_ok:
+                    has_data = True
+            if has_data:
+                data_steps += 1
+                if step_ok:
+                    ok += 1
+        if data_steps == 0:
+            # 모든 bus step의 GBIS 데이터를 받지 못함 → 미확인 (정렬상 1.0 동급)
+            score = None
+        else:
+            score = ok / data_steps
         st.session_state[score_ck] = score
         return score
 
     scored = [(r, _route_lf_score(r)) for r in routes]
 
-    # bus 없는 경로(score=None)는 저상 이슈 없음 → 1.0 동급으로 정렬
-    scored.sort(key=lambda x: (
-        -(x[1] if x[1] is not None else 1.0),  # 저상 점수 내림차순
-        x[0].get("total_walk", 0),              # 도보 짧은 순
-        x[0].get("transfers", 0),               # 환승 적은 순
-        x[0]["total_minutes"],                  # 시간 짧은 순
-    ))
-    routes_with_scores = scored
+    def _lf_tier(s):
+        """저상 정렬 티어. 작을수록 위쪽."""
+        if s == 1.0 or s == "subway_only":
+            return 0  # 확정 OK (저상 모두 도착 or 저상 이슈 없음)
+        if isinstance(s, (int, float)) and s > 0:
+            return 1  # 부분 저상
+        if s is None:
+            return 2  # 미확인 (버스 있지만 GBIS 데이터 없음)
+        return 3      # 저상 없음 (score == 0)
 
-    # bus 있는 경로 중 100% 미달 케이스가 있으면 안내
-    bus_routes_scores = [s for r, s in scored if s is not None]
-    if bus_routes_scores and max(bus_routes_scores) < 1.0:
+    scored.sort(key=lambda x: (
+        _lf_tier(x[1]),
+        x[0].get("total_walk", 0),
+        x[0].get("transfers", 0),
+        x[0]["total_minutes"],
+    ))
+
+    def _norm_score_for_card(s):
+        return None if s == "subway_only" else s
+
+    routes_with_scores = [
+        (r, s, _first_bus_arrival(r)) for r, s in scored
+    ]
+    numeric_scores = [s for r, s in scored if isinstance(s, (int, float))]
+    if numeric_scores and max(numeric_scores) < 1.0:
         st.info("⚠️ 30분 이내 저상버스가 도착하는 경로가 제한적입니다. 위쪽 경로일수록 휠체어 친화도가 높습니다.")
 elif current_mode == "walk_less":
-    # 덜 걷는 길: 도보 짧은 순 → 시간 짧은 순
     routes = sorted(routes, key=lambda r: (r.get("total_walk", 0), r["total_minutes"]))
-    routes_with_scores = [(r, None) for r in routes]
+    routes_with_scores = [(r, None, _first_bus_arrival(r)) for r in routes]
 else:
-    # 빠른 길: 시간 짧은 순
     routes = sorted(routes, key=lambda r: r["total_minutes"])
-    routes_with_scores = [(r, None) for r in routes]
+    routes_with_scores = [(r, None, _first_bus_arrival(r)) for r in routes]
 
-for route, score in routes_with_scores:
-    render_route_card(route, key_prefix=f"route_{current_mode}", lf_score=score)
+for item in routes_with_scores:
+    if len(item) == 3:
+        route, score, bus_arr = item
+    else:
+        route, score = item
+        bus_arr = None
+    render_route_card(
+        route, key_prefix=f"route_{current_mode}",
+        lf_score=_norm_score_for_card(score) if current_mode == "wheel" else score,
+        bus_arrival=bus_arr,
+    )

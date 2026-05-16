@@ -16,7 +16,14 @@ NAVY = "#002F6C"
 from services.odsay_api import load_lane
 from services.tmap_api import pedestrian_route
 from services.bus_arrival import get_arrivals as _get_bus_arrivals
-from data.dummy_data import AI_BRIEFING
+from services.bus_arrival import has_low_floor_arriving as _has_lf_arriving
+from services.bus_arrival import has_low_floor_on_route as _has_lf_route
+from services.subway_arrival import get_next_trains as _get_next_trains
+from services.rail_portal import find_station_codes as _find_station_codes
+from services.kakao_local import find_nearest_exit as _find_nearest_exit
+from services.kakao_local import find_station_exits as _find_station_exits
+from services.ai_briefing import generate_briefing as _gen_briefing
+from services.ai_briefing import analyze_subway_diagram as _analyze_diagram
 
 st.set_page_config(page_title="경로 상세", page_icon="🗺️", layout="centered")
 
@@ -158,7 +165,7 @@ def _direction_label(start_name, end_name):
     return fallback
 
 
-def _render_station_panel(name, info, target_end_name=None):
+def _render_station_panel(name, info, target_end_name=None, preferred_exit=None):
     """KRIC 데이터로 자체 교통약자 패널 렌더링 (출구/방면 선택형)"""
     import re
     NAVY_C = "#002F6C"
@@ -202,11 +209,32 @@ def _render_station_panel(name, info, target_end_name=None):
         exit_options = list(exit_groups.keys())
         exit_options.sort(key=lambda s: int(re.search(r"\d+", s).group()) if re.search(r"\d+", s) else 999)
 
-        selected_exit = st.selectbox(
+        # 추론된 출구가 있으면 default 자동 선택 + ✓ (추천) 라벨
+        # 매칭 실패해도 기본 선택(idx 0)에 ✓ 표시는 항상
+        labeled_exit_options = list(exit_options)
+        exit_default_idx = 0
+        _matched_pref = False
+        if preferred_exit:
+            pref_num = re.search(r"\d+", preferred_exit)
+            if pref_num:
+                pref_n = pref_num.group()
+                for i, opt in enumerate(exit_options):
+                    nums_in_opt = re.findall(r"\d+", opt)
+                    if pref_n in nums_in_opt:
+                        labeled_exit_options[i] = f"✓ {opt} (추천)"
+                        exit_default_idx = i
+                        _matched_pref = True
+                        break
+        if not _matched_pref and labeled_exit_options:
+            labeled_exit_options[exit_default_idx] = f"✓ {labeled_exit_options[exit_default_idx]}"
+
+        selected_exit_labeled = st.selectbox(
             "이용할 출입구 선택",
-            exit_options,
+            labeled_exit_options,
+            index=exit_default_idx,
             key=f"exit_sel_{name}",
         )
+        selected_exit = exit_options[labeled_exit_options.index(selected_exit_labeled)]
 
         # 해당 출구의 방면 옵션 (여러 방면 있으면)
         paths_for_exit = exit_groups[selected_exit]
@@ -270,6 +298,10 @@ def _render_station_panel(name, info, target_end_name=None):
                 else:
                     label = base_label
                 labeled_options.append(label)
+
+            # 매칭으로 ✓가 붙은 옵션이 없으면 기본 선택(default_idx)에 ✓ 추가
+            if labeled_options and not any(opt.startswith("✓") for opt in labeled_options):
+                labeled_options[default_idx] = f"✓ {labeled_options[default_idx]}"
 
             selected_label = st.selectbox(
                 "방면 선택",
@@ -380,6 +412,146 @@ def _render_station_panel(name, info, target_end_name=None):
                 else:
                     label = f"{loc}{floor_info}" if loc else "위치 정보 없음"
                 st.markdown(f"- {label}")
+
+
+def _cached_station_exits(station_name):
+    """역의 출구 좌표 dict (session_state 영구 캐시)."""
+    ck = f"station_exits_{station_name}"
+    if ck in st.session_state:
+        return st.session_state[ck]
+    exits = _find_station_exits(station_name)
+    st.session_state[ck] = exits
+    return exits
+
+
+def _nearest_exit(station_name, lng, lat):
+    if lng is None or lat is None:
+        return None
+    exits = _cached_station_exits(station_name)
+    if not exits:
+        return None
+    best_no, best_d = None, float("inf")
+    for no, (ex_lng, ex_lat) in exits.items():
+        d = (ex_lng - lng) ** 2 + (ex_lat - lat) ** 2
+        if d < best_d:
+            best_d, best_no = d, no
+    return best_no
+
+
+def _infer_subway_exits(steps, origin_coord, dest_coord):
+    """경로 step 흐름에서 각 지하철역의 진입/하차 출구 추론.
+    Returns: {station_name: {"in": "7번", "out": "10번"}}
+    """
+    import re
+    result = {}
+    for i, s in enumerate(steps):
+        if s.get("type") != "subway":
+            continue
+        st_name = s.get("start_name", "")
+        end_name = s.get("end_name", "")
+        if not st_name:
+            continue
+        # 진입 좌표: 사용자가 "출발한 곳" — 이전 walk의 start (또는 이전 transit의 end)
+        in_lng = in_lat = None
+        in_exit_from_name = None
+        for j in range(i - 1, -1, -1):
+            ps = steps[j]
+            if ps.get("type") == "walk":
+                # walk이면 start = 사용자가 출발한 곳
+                if ps.get("start_x") and ps.get("start_y"):
+                    in_lng, in_lat = ps["start_x"], ps["start_y"]
+                    m = re.search(r"(\d+)번\s*출구", ps.get("start_name", "") or "")
+                    if m:
+                        in_exit_from_name = f"{m.group(1)}번"
+                    break
+            else:
+                # transit이면 end = 직전 transit 종착
+                if ps.get("end_x") and ps.get("end_y"):
+                    in_lng, in_lat = ps["end_x"], ps["end_y"]
+                    m = re.search(r"(\d+)번\s*출구", ps.get("end_name", "") or "")
+                    if m:
+                        in_exit_from_name = f"{m.group(1)}번"
+                    break
+        if in_lng is None and origin_coord:
+            in_lng = origin_coord.get("lng")
+            in_lat = origin_coord.get("lat")
+        if in_exit_from_name:
+            result.setdefault(st_name, {})["in"] = in_exit_from_name
+        elif in_lng and in_lat:
+            no = _nearest_exit(st_name, in_lng, in_lat)
+            if no:
+                result.setdefault(st_name, {})["in"] = f"{no}번"
+
+        # 하차 좌표: 사용자가 "가야할 곳" — 다음 walk의 end (또는 다음 transit의 start)
+        if end_name:
+            out_lng = out_lat = None
+            out_exit_from_name = None
+            for j in range(i + 1, len(steps)):
+                ns = steps[j]
+                if ns.get("type") == "walk":
+                    # walk이면 end = 사용자가 가야할 곳
+                    if ns.get("end_x") and ns.get("end_y"):
+                        out_lng, out_lat = ns["end_x"], ns["end_y"]
+                        m = re.search(r"(\d+)번\s*출구", ns.get("end_name", "") or "")
+                        if m:
+                            out_exit_from_name = f"{m.group(1)}번"
+                        break
+                else:
+                    # transit이면 start = 다음 transit 출발지
+                    if ns.get("start_x") and ns.get("start_y"):
+                        out_lng, out_lat = ns["start_x"], ns["start_y"]
+                        m = re.search(r"(\d+)번\s*출구", ns.get("start_name", "") or "")
+                        if m:
+                            out_exit_from_name = f"{m.group(1)}번"
+                        break
+            if out_lng is None and dest_coord:
+                out_lng = dest_coord.get("lng")
+                out_lat = dest_coord.get("lat")
+            if out_exit_from_name:
+                result.setdefault(end_name, {})["out"] = out_exit_from_name
+            elif out_lng and out_lat:
+                no = _nearest_exit(end_name, out_lng, out_lat)
+                if no:
+                    result.setdefault(end_name, {})["out"] = f"{no}번"
+    return result
+
+
+def _resolve_exit_coord(station_name, target_lng, target_lat, preferred_exit_no=None):
+    """역명 + 타겟 좌표 → 출구의 (lng, lat) 반환.
+
+    우선순위:
+      Tier 1: preferred_exit_no가 주어지고 출구 데이터에 존재 → 해당 출구 좌표 (정규식 추출 우선)
+      Tier 2: 타겟 좌표에 가장 가까운 출구 좌표
+    출구 데이터 없거나 target이 None이면 None.
+    """
+    if not station_name:
+        return None
+    exits = _cached_station_exits(station_name)
+    if not exits:
+        return None
+    # Tier 1: 명시된 출구 번호 우선
+    if preferred_exit_no is not None:
+        try:
+            n = int(preferred_exit_no)
+            if n in exits:
+                ex_lng, ex_lat = exits[n]
+                return (float(ex_lng), float(ex_lat))
+        except (TypeError, ValueError):
+            pass
+    # Tier 2: GPS 거리
+    if target_lng is None or target_lat is None:
+        return None
+    best = None
+    best_d = float("inf")
+    for no, (ex_lng, ex_lat) in exits.items():
+        try:
+            d = (float(ex_lng) - float(target_lng)) ** 2 + (float(ex_lat) - float(target_lat)) ** 2
+        except (TypeError, ValueError):
+            continue
+        if d < best_d:
+            best_d = d
+            best = (float(ex_lng), float(ex_lat))
+    return best
 
 
 render_header(back_target="pages/1_경로_탐색.py")
@@ -497,6 +669,31 @@ for idx, step in enumerate(steps):
             ex, ey = dest_coord.get("lng"), dest_coord.get("lat")
     if not (sx and sy and ex and ey):
         continue
+    # 지하철 출구 기반 끝점 보정
+    prev_step = steps[idx - 1] if idx > 0 else None
+    next_step = steps[idx + 1] if idx + 1 < len(steps) else None
+
+    import re as _re_exit
+    # 다음 step이 subway → walk 끝점을 출구 좌표로 보정
+    #   Tier1: walk의 end_name에서 "N번 출구" 추출 → 그 출구
+    #   Tier2: walk 시작점에 가장 가까운 출구
+    if next_step and next_step.get("type") == "subway":
+        station_nm = next_step.get("start_name", "")
+        _m = _re_exit.search(r"(\d+)번\s*출구", step.get("end_name", "") or "")
+        _pref = _m.group(1) if _m else None
+        new_end = _resolve_exit_coord(station_nm, sx, sy, preferred_exit_no=_pref)
+        if new_end:
+            ex, ey = new_end
+
+    # 이전 step이 subway → walk 시작점을 출구 좌표로 보정
+    if prev_step and prev_step.get("type") == "subway":
+        station_nm = prev_step.get("end_name", "")
+        _m = _re_exit.search(r"(\d+)번\s*출구", step.get("start_name", "") or "")
+        _pref = _m.group(1) if _m else None
+        new_start = _resolve_exit_coord(station_nm, ex, ey, preferred_exit_no=_pref)
+        if new_start:
+            sx, sy = new_start
+
     cache_key = f"tmap_walk_{sx}_{sy}_{ex}_{ey}_opt{_search_option}"
     tmap_coords = st.session_state.get(cache_key)
     if not tmap_coords:
@@ -657,17 +854,23 @@ st.markdown(f"### 📋 {selected['total_minutes']}분 · {selected['summary']}")
 st.caption(f"💰 요금 {selected.get('payment', 0):,}원 · 🚶 도보 {selected.get('total_walk', 0)}m")
 
 # ─── 4. 경로 단계별 정보 ───
-for step in steps:
+for _i, step in enumerate(steps):
     icon = {"walk": "🚶", "bus": "🚌", "transfer": "🔄", "subway": "🚇"}.get(step["type"], "•")
-    bf_mark = "✅" if step.get("barrier_free") else "⚠️"
     stype = step["type"]
+
+    # 환승 도보 판별: walk 인데 앞뒤가 모두 transit(bus/subway)
+    is_transfer_walk = False
+    if stype == "walk":
+        prev_is_transit = _i > 0 and steps[_i - 1].get("type") in ("bus", "subway")
+        next_is_transit = _i + 1 < len(steps) and steps[_i + 1].get("type") in ("bus", "subway")
+        is_transfer_walk = prev_is_transit and next_is_transit
 
     if stype == "bus":
         border_color = "#1f77b4"
     elif stype == "subway":
         border_color = "#2DB400"
     elif stype == "walk":
-        border_color = "#FF8C00"
+        border_color = "#7B1FA2" if is_transfer_walk else "#FF8C00"
     else:
         border_color = "#999"
 
@@ -692,20 +895,75 @@ for step in steps:
             direction_label = _direction_label(start_nm, end_nm)
         else:
             direction_label = f"{end_nm} 방면"
+        # 방면 앞에 출발 정류소 이름 prefix (| 구분자)
+        if start_nm:
+            direction_label = f"{start_nm} | {direction_label}"
 
-        # 버스 실시간 도착정보 (GBIS 우선)
+        # 실시간 도착정보 (버스=GBIS, 지하철=한국철도공사)
         arrival_html = ""
+        if stype == "subway":
+            # 지하철 도착 시각 (캐시, 방향별 분리)
+            sub_ck = f"sub_arr_v2_{start_nm}_{end_nm}"
+            if sub_ck in st.session_state:
+                sub_info = st.session_state[sub_ck]
+            else:
+                codes = _find_station_codes(start_nm)
+                end_codes = _find_station_codes(end_nm) if end_nm else None
+                to_cd = end_codes[2] if end_codes else None
+                if codes:
+                    rail_op, ln_cd_v, stin_cd_v, _ = codes
+                    sub_info = _get_next_trains(
+                        rail_op, ln_cd_v, stin_cd_v, limit=2, to_stin_cd=to_cd
+                    )
+                else:
+                    sub_info = {"trains": [], "last_dpt": None, "status": "no_data"}
+                st.session_state[sub_ck] = sub_info
+            sub_status = sub_info.get("status", "no_data") if isinstance(sub_info, dict) else "no_data"
+            sub_trains = sub_info.get("trains", []) if isinstance(sub_info, dict) else []
+            sub_last_dpt = sub_info.get("last_dpt") if isinstance(sub_info, dict) else None
+            if sub_status == "ok" and sub_trains:
+                badges = []
+                for t in sub_trains:
+                    m = t.get("minutes_until")
+                    dest = t.get("destination", "")
+                    dest_str = f" ({dest}행)" if dest else ""
+                    badges.append(f"<b>{m}분 후</b>{dest_str}")
+                if sub_last_dpt:
+                    badges.append(f"<span style='color:#666;font-weight:500;'>막차 {sub_last_dpt}</span>")
+                arrival_html = (
+                    f'<div style="background:rgba(0,47,108,0.08);border-radius:10px;'
+                    f'padding:10px 14px;margin:8px 0;font-size:1.4rem;color:{NAVY};font-weight:600;'
+                    f'font-family:\'Gowun Batang\',\'Noto Serif KR\',serif;">'
+                    f'⏱️ {" · ".join(badges)}</div>'
+                )
+            elif sub_status == "after_last":
+                last_str = f" (막차 {sub_last_dpt})" if sub_last_dpt else ""
+                arrival_html = (
+                    f'<div style="background:rgba(120,120,120,0.12);border-radius:10px;'
+                    f'padding:10px 14px;margin:8px 0;font-size:1.4rem;color:#666;font-weight:600;'
+                    f'font-family:\'Gowun Batang\',\'Noto Serif KR\',serif;">'
+                    f'⏱️ 오늘 운행 종료{last_str}</div>'
+                )
+            elif sub_status == "no_data":
+                arrival_html = (
+                    f'<div style="background:rgba(120,120,120,0.08);border-radius:10px;'
+                    f'padding:10px 14px;margin:8px 0;font-size:1.2rem;color:#888;font-weight:500;'
+                    f'font-family:\'Gowun Batang\',\'Noto Serif KR\',serif;">'
+                    f'⏱️ 도착 정보 없음</div>'
+                )
         if stype == "bus":
             bus_no = step.get("bus_no", "")
             sx, sy = step.get("start_x"), step.get("start_y")
             station_id = step.get("start_id")
             ods_city = step.get("city_code")
-            cache_k = f"bus_arr_{station_id}_{bus_no}_{sx}_{sy}"
+            start_nm_for_bus = step.get("start_name", "")
+            cache_k = f"bus_arr_v2_{station_id}_{bus_no}_{sx}_{sy}"
             if cache_k in st.session_state:
                 arrivals = st.session_state[cache_k]
             else:
                 arrivals = _get_bus_arrivals(
-                    station_id=station_id, lng=sx, lat=sy, city_code_hint=ods_city,
+                    station_id=station_id, lng=sx, lat=sy,
+                    city_code_hint=ods_city, station_name=start_nm_for_bus,
                 )
                 st.session_state[cache_k] = arrivals
             matched = [a for a in (arrivals or []) if a.get("route_name") == bus_no]
@@ -717,49 +975,97 @@ for step in steps:
                     for p in preds:
                         m = p.get("minutes")
                         is_low = p.get("low_floor")
-                        low_tag = f' <span style="background:{NAVY};color:white;font-size:0.7rem;font-weight:700;padding:1px 6px;border-radius:8px;">♿저상</span>' if is_low else ""
+                        low_tag = f' <span style="background:{NAVY};color:white;font-size:1.05rem;font-weight:700;padding:3px 10px;border-radius:10px;">♿저상</span>' if is_low else ""
                         if is_low:
                             has_low_floor = True
                         stops = f" ({p['stops_left']}정류장 전)" if p.get("stops_left") else ""
                         badges.append(f"<b>{m}분 후</b>{low_tag}{stops}")
-                    # 저상 차량 도착 예정이면 카드 머리에도 라벨 추가
-                    if has_low_floor:
+                    # 도착예정 첫 두 대에 저상 없으면 노선 단위 위치 검증
+                    lf_on_route = has_low_floor
+                    if not lf_on_route and bus_no:
+                        loc_ck = f"lf_loc_v3_{station_id or 'no'}_{bus_no}"
+                        if loc_ck in st.session_state:
+                            lf_on_route = st.session_state[loc_ck]
+                        else:
+                            if station_id:
+                                lf_on_route = _has_lf_arriving(station_id, bus_no, max_stops_ahead=15)
+                            else:
+                                lf_on_route = _has_lf_route(bus_no)
+                            st.session_state[loc_ck] = lf_on_route
+                    if lf_on_route:
+                        label_text = "♿ 저상 도착" if has_low_floor else "♿ 노선에 저상 운행"
                         head += (
                             f' <span style="display:inline-block;background:{NAVY};color:white;'
-                            f'font-size:0.75rem;font-weight:700;padding:2px 8px;border-radius:10px;'
-                            f'margin-left:6px;vertical-align:middle;">♿ 저상 도착</span>'
+                            f'font-size:1.1rem;font-weight:700;padding:4px 12px;border-radius:12px;'
+                            f'margin-left:8px;vertical-align:middle;">{label_text}</span>'
                         )
                     arrival_html = (
-                        f'<div style="background:rgba(0,47,108,0.08);border-radius:8px;'
-                        f'padding:8px 12px;margin:6px 0;font-size:0.95rem;color:{NAVY};">'
+                        f'<div style="background:rgba(0,47,108,0.08);border-radius:10px;'
+                        f'padding:10px 14px;margin:8px 0;font-size:1.4rem;color:{NAVY};font-weight:600;'
+                        f'font-family:\'Gowun Batang\',\'Noto Serif KR\',serif;">'
                         f'⏱️ {" · ".join(badges)}</div>'
                     )
 
+        _gf = "'Gowun Batang', 'Noto Serif KR', serif"
         st.markdown(
             f'<div style="padding:14px 18px;background:#f8f9fa;'
             f'border-left:5px solid {border_color};margin-bottom:6px;'
-            f'border-radius:10px;font-size:{fs_body}px;color:#333;">'
-            f'<div style="font-weight:700;margin-bottom:4px;">{head} {bf_mark}</div>'
+            f'border-radius:10px;font-size:{fs_body}px;color:#333;'
+            f'font-family:{_gf};">'
+            f'<div style="font-weight:700;margin-bottom:4px;font-family:{_gf};">{head}</div>'
             f'<div style="font-size:{fs_body + 2}px;color:{NAVY};font-weight:700;'
-            f'margin:6px 0;">↗ {direction_label}</div>'
+            f'margin:6px 0;font-family:{_gf};">↗ {direction_label}</div>'
             f'{arrival_html}'
-            f'<div style="font-size:{max(fs_body - 2, 13)}px;color:#666;">'
-            f'{start_nm} 승차 · {station_count}{meta_unit} · {section_time}분</div>'
+            f'<div style="display:flex;align-items:center;gap:10px;margin:10px 0 4px 0;'
+            f'padding:8px 12px;background:rgba(0,47,108,0.05);border-radius:8px;'
+            f'font-family:{_gf};font-size:{fs_body}px;flex-wrap:wrap;">'
+            f'<span style="color:#666;font-size:{max(fs_body - 2, 12)}px;">승차</span>'
+            f'<b style="color:{NAVY};">{start_nm}</b>'
+            f'<span style="color:#999;">→</span>'
+            f'<span style="color:#666;font-size:{max(fs_body - 2, 12)}px;">하차</span>'
+            f'<b style="color:{NAVY};">{end_nm}</b>'
+            f'</div>'
+            f'<div style="font-size:{max(fs_body - 2, 13)}px;color:#666;'
+            f'font-family:{_gf};">'
+            f'{station_count}{meta_unit} · {section_time}분 이동</div>'
             f'</div>',
             unsafe_allow_html=True,
         )
     else:
-        # walk / transfer 등 기존 형식
+        _gf = "'Gowun Batang', 'Noto Serif KR', serif"
+        if is_transfer_walk:
+            _sec = step.get("section_time", 0)
+            _dist_m = 0
+            try:
+                # step["desc"]에는 "(245m)" 형태로 거리 들어있음 — 정규식으로 추출
+                import re as _re
+                _dm = _re.search(r"\((\d+)m\)", step.get("desc", ""))
+                if _dm:
+                    _dist_m = int(_dm.group(1))
+            except Exception:
+                pass
+            _dist_str = f" ({_dist_m}m)" if _dist_m else ""
+            _label = f"🔄 환승 도보 <b>{_sec}분</b>{_dist_str}"
+            _bg = "#f3e5f5"  # 연보라
+            _fg = "#4A148C"
+        else:
+            _label = f"{icon} {step['desc']}"
+            _bg = "#f8f9fa"
+            _fg = "#333"
         st.markdown(
-            f'<div style="padding:12px 16px;background:#f8f9fa;'
+            f'<div style="padding:12px 16px;background:{_bg};'
             f'border-left:5px solid {border_color};margin-bottom:4px;'
-            f'border-radius:8px;font-size:{fs_body}px;color:#333;">'
-            f'{icon} {step["desc"]}  {bf_mark}'
+            f'border-radius:8px;font-size:{fs_body}px;color:{_fg};'
+            f'font-family:{_gf};font-weight:{"600" if is_transfer_walk else "400"};">'
+            f'{_label}'
             f'</div>',
             unsafe_allow_html=True,
         )
 
 st.write("---")
+
+# 지하철역 진입/하차 출구 자동 추론 (도보 좌표 + 카카오 출구 좌표 매칭)
+_subway_exits = _infer_subway_exits(steps, origin_coord, dest_coord)
 
 # ─── 5. 교통약자 시설 정보 (카카오맵 지하철역 임베드) ───
 st.markdown("### ♿ 교통약자 시설 정보")
@@ -814,7 +1120,14 @@ if station_names:
                     break
             with tab:
                 info = station_data[nm]
-                _render_station_panel(nm, info, target_end_name=target_end)
+                # 추론된 출구 — 진입 정류장은 'in', 하차 정류장은 'out'
+                _ex_info = _subway_exits.get(nm, {})
+                _pref_exit = _ex_info.get("in") or _ex_info.get("out")
+                _render_station_panel(
+                    nm, info,
+                    target_end_name=target_end,
+                    preferred_exit=_pref_exit,
+                )
     else:
         st.info("이 경로의 지하철역 교통약자 정보를 불러올 수 없습니다.")
 else:
@@ -822,12 +1135,68 @@ else:
 
 st.write("---")
 
-# ─── 6. AI 요약 브리핑 ───
+# ─── 6. AI 요약 브리핑 (Gemini Vision 도면 분석 포함) ───
 st.markdown("### 🤖 AI 경로 브리핑")
+
+# 휠체어 모드일 때만 첫 지하철역 도면 분석 (Gemini 호출 비용 절감)
+_diagram_text = None
+if _route_mode == "wheel":
+    _first_subway = next(
+        (s for s in steps if s.get("type") == "subway" and s.get("start_name")),
+        None,
+    )
+    if _first_subway:
+        _sub_start = _first_subway.get("start_name", "")
+        _sub_end = _first_subway.get("end_name", "")
+        _sub_dir = _direction_label(_sub_start, _sub_end)
+        # station_data에서 도면 imgPath 추출
+        _sd = (station_data or {}).get(_sub_start)
+        if _sd:
+            _mv = _sd.get("movement", [])
+            _img = next(
+                (it.get("imgPath") for it in _mv if it.get("imgPath")),
+                None,
+            )
+            if _img:
+                _ai_ck = f"diagram_ai_{_sub_start}_{_sub_dir}"
+                if _ai_ck in st.session_state:
+                    _diagram_text = st.session_state[_ai_ck]
+                else:
+                    with st.spinner("🤖 도면을 AI가 분석 중..."):
+                        _diagram_text = _analyze_diagram(_img, _sub_start, _sub_dir)
+                    st.session_state[_ai_ck] = _diagram_text
+
+# 추론된 출구를 brifing에 합쳐 전달 (diagram_insight 앞에 prepend)
+_exit_lines = []
+for st_name, ex in _subway_exits.items():
+    parts = []
+    if ex.get("in"):
+        parts.append(f"**{ex['in']} 출입구**로 진입")
+    if ex.get("out"):
+        parts.append(f"**{ex['out']} 출입구**로 하차")
+    if parts:
+        _exit_lines.append(f"🚇 **{st_name}**: " + " / ".join(parts))
+_exit_block = "\n".join(_exit_lines) if _exit_lines else None
+if _exit_block:
+    _diagram_text = (_exit_block + ("\n\n" + _diagram_text if _diagram_text else ""))
+
+_briefing_text = _gen_briefing(
+    selected,
+    _route_mode,
+    origin_name,
+    dest_name,
+    diagram_insight=_diagram_text,
+)
+# **굵게** → <strong>, 줄바꿈 → <br>
+import re as _re
+_briefing_html = _re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", _briefing_text)
+_briefing_html = _briefing_html.replace("\n\n", "<br><br>").replace("\n", "<br>")
 st.markdown(
-    f'<div style="background:linear-gradient(135deg, #fff3e0 0%, #ffe0b2 100%);border-left:4px solid #ff9800;border-radius:12px;padding:18px;font-size:{fs_body}px;line-height:1.6;color:#333;">'
-    f'{AI_BRIEFING.replace(chr(10), "<br><br>")}'
-    f'</div>',
+    f'<div style="background:linear-gradient(135deg, #f3e5f5 0%, #e1bee7 100%);'
+    f'border-left:4px solid {NAVY};border-radius:12px;padding:18px;'
+    f'font-size:{fs_body}px;line-height:1.7;color:#222;'
+    f'font-family:\'Gowun Batang\',\'Noto Serif KR\',serif;">'
+    f'{_briefing_html}</div>',
     unsafe_allow_html=True,
 )
 

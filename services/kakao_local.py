@@ -56,6 +56,62 @@ def search_places(query: str, size: int = 8):
         return []
 
 
+def find_station_exits(station_name: str, max_exits: int = 12):
+    """역의 출구 좌표 검색 → {출구번호(int): (lng, lat)}.
+
+    카카오에 '{역명}역 N번 출구'로 N=1..max_exits 각각 검색.
+    - 카카오는 broad 쿼리(`{역명}역 출구`)에 출구 POI를 안 돌려주므로 per-N 호출이 필요
+    - 카카오는 존재하지 않는 번호 검색 시 다른 역의 같은 번호를 돌려주는 버그가 있어
+      반드시 result place_name에 `{역명}역` 이 그대로 포함돼야 통과
+    - 출구/출입구, 공백 변형 모두 허용
+    """
+    import re
+    if not station_name:
+        return {}
+    nm = station_name.rstrip("역").strip()
+    if not nm:
+        return {}
+    nm_clean = nm.replace(" ", "")
+    target_token = f"{nm_clean}역"  # 예: "야탑역", "수원시청역"
+
+    exits = {}
+    for n in range(1, max_exits + 1):
+        docs = search_places(f"{nm}역 {n}번 출구", size=1)
+        if not docs:
+            continue
+        d = docs[0]
+        place_raw = d.get("place_name") or ""
+        place = place_raw.replace(" ", "")
+        # 1) 역명 일치 (다른 역의 동일 번호 결과 차단)
+        if target_token not in place:
+            continue
+        # 2) 출구 번호 + 출구/출입구 매칭 (공백·접미 변형 허용)
+        if not re.search(rf"\b{n}번\s*출[구입]구?", place_raw) and not re.search(rf"{n}번출[구입]구?", place):
+            continue
+        try:
+            exits[n] = (float(d["x"]), float(d["y"]))
+        except (KeyError, TypeError, ValueError):
+            continue
+    return exits
+
+
+def find_nearest_exit(station_name: str, lng: float, lat: float):
+    """주어진 좌표에 가장 가까운 출구 번호 반환. 못 찾으면 None."""
+    if lng is None or lat is None:
+        return None
+    exits = find_station_exits(station_name)
+    if not exits:
+        return None
+    best_no = None
+    best_dist = float("inf")
+    for no, (ex_lng, ex_lat) in exits.items():
+        d = (ex_lng - lng) ** 2 + (ex_lat - lat) ** 2
+        if d < best_dist:
+            best_dist = d
+            best_no = no
+    return best_no
+
+
 def get_subway_kakao_url(station_name: str):
     """역 이름 → 카카오맵 교통약자 페이지 URL.
 
