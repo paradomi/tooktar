@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from streamlit_searchbox import st_searchbox
-from streamlit_geolocation import streamlit_geolocation
+from streamlit_js_eval import get_geolocation
 
 from components.styles import apply_global_styles
 from data.dummy_data import FAVORITE_PLACES
@@ -324,26 +324,25 @@ else:
 st.markdown('<div class="search-section-title">📍 어디로 가시나요?</div>', unsafe_allow_html=True)
 
 
-gps_col1, gps_col2 = st.columns([1, 3])
-with gps_col1:
-    loc = streamlit_geolocation()
-with gps_col2:
-    st.caption("📍 위 버튼을 눌러 GPS로 현재 위치를 설정할 수 있습니다")
-
-if loc and loc.get("latitude") and loc.get("longitude"):
-    lat = loc["latitude"]
-    lng = loc["longitude"]
-    gps_ck = f"gps_addr_{lat}_{lng}"
-    if gps_ck in st.session_state:
-        gps_addr = st.session_state[gps_ck]
-    else:
-        gps_addr = coord_to_address(lng, lat)
-        st.session_state[gps_ck] = gps_addr
-    if gps_addr:
-        st.session_state["origin_coord"] = gps_addr
-        st.session_state["origin_input"] = f"📍 {gps_addr['name']}"
-        st.session_state["_prev_origin"] = st.session_state["origin_input"]
-        st.success(f"📍 현재 위치: **{gps_addr['name']}** ({gps_addr['address']})")
+# ─── GPS 자동 감지 (페이지 로드 시 브라우저 위치 권한 자동 요청) ───
+# 권한 거부/실패 시 조용히 fallback. 한 번 권한 허용하면 이후 방문은 무인 자동.
+_gps_loc = get_geolocation()
+if _gps_loc and isinstance(_gps_loc, dict):
+    _coords = _gps_loc.get("coords") or {}
+    _lat = _coords.get("latitude")
+    _lng = _coords.get("longitude")
+    if _lat is not None and _lng is not None:
+        _gps_ck = f"gps_addr_{_lat:.5f}_{_lng:.5f}"
+        if _gps_ck in st.session_state:
+            _gps_addr = st.session_state[_gps_ck]
+        else:
+            _gps_addr = coord_to_address(_lng, _lat)
+            st.session_state[_gps_ck] = _gps_addr
+        if _gps_addr:
+            st.session_state["origin_coord"] = _gps_addr
+            st.session_state["origin_input"] = f"📍 {_gps_addr['name']}"
+            st.session_state["_prev_origin"] = st.session_state["origin_input"]
+            st.caption(f"📍 현재 위치: **{_gps_addr['name']}**")
 
 selected_origin = st_searchbox(
     _place_search,
