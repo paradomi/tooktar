@@ -212,14 +212,31 @@ if st.session_state.get("edit_fav", False):
 
     favorites = st.session_state["favorite_places"]
 
-    # 동일 표시 충돌 방지 — 라벨+주소+인덱스 조합으로 고유성 확보 (인덱스는 invisible)
-    def _item_label(i, p):
-        # 보이는 부분
-        visible = f"{p['icon']} {p['label']} · {p['address']}"
-        # 뒤에 zero-width 공백 + 인덱스 (시각상 안 보임, 매칭용)
-        return f"{visible}​{i}​"
+    # 편집 모드: 컬럼 모바일 collapse 차단 + 드래그/버튼 스타일
+    st.markdown("""
+    <style>
+    [data-testid="stMain"] [data-testid="stHorizontalBlock"] {
+        flex-wrap: nowrap !important;
+        gap: 8px !important;
+    }
+    [data-testid="stMain"] [data-testid="stHorizontalBlock"] > [data-testid="stColumn"] {
+        min-width: 0 !important;
+    }
+    div[data-testid="stButton"] button[key^="del_fav_"] {
+        min-height: 50px !important;
+        height: 50px !important;
+        border-radius: 12px !important;
+        padding: 0 !important;
+        margin-bottom: 6px !important;
+    }
+    </style>
+    """, unsafe_allow_html=True)
 
-    _sort_items_input = [_item_label(i, p) for i, p in enumerate(favorites)]
+    # 표시 항목 (인덱스 prefix/suffix 없이 깔끔하게)
+    _sort_items_input = [
+        f"{p['icon']} {p['label']} · {p['address']}"
+        for p in favorites
+    ]
     _sort_custom_css = """
     .sortable-component { gap: 6px; }
     .sortable-item {
@@ -228,12 +245,16 @@ if st.session_state.get("edit_fav", False):
         border-radius: 12px !important;
         padding: 12px 16px !important;
         min-height: 50px !important;
+        height: 50px !important;
+        box-sizing: border-box !important;
         font-size: 1.05rem !important;
         font-weight: 600 !important;
         color: #002F6C !important;
         cursor: grab !important;
         font-family: 'Gowun Batang','Noto Serif KR',serif !important;
-        margin: 0 !important;
+        margin: 0 0 6px 0 !important;
+        display: flex !important;
+        align-items: center !important;
     }
     .sortable-item:active { cursor: grabbing !important; }
     """
@@ -248,34 +269,22 @@ if st.session_state.get("edit_fav", False):
             key="fav_sorter",
         )
     with _del_col:
-        # 삭제 버튼은 드래그 항목과 시각적으로 맞춤 (50px 높이)
-        st.markdown("""
-        <style>
-        [data-testid="stButton"] button[kind="secondary"][aria-label*="del_fav"]:not(:has(strong)) {
-            min-height: 50px !important;
-            height: 50px !important;
-            border-radius: 12px !important;
-            padding: 0 !important;
-            margin-bottom: 6px !important;
-        }
-        </style>
-        """, unsafe_allow_html=True)
-        for i, p in enumerate(favorites):
+        for i in range(len(favorites)):
             if st.button("🗑", key=f"del_fav_{i}", use_container_width=True):
                 favorites.pop(i)
                 st.session_state["favorite_places"] = favorites
                 st.rerun()
 
-    # 순서가 바뀌었으면 favorites 재정렬 (zero-width 인덱스 파싱)
-    import re as _re
+    # 순서가 바뀌었으면 favorites 재정렬 (문자열 매칭, 중복 인덱스 추적)
     if _sorted and _sorted != _sort_items_input:
+        used_indices = set()
         new_order = []
         for s in _sorted:
-            m = _re.search(r"​(\d+)​", s)
-            if m:
-                orig_idx = int(m.group(1))
-                if 0 <= orig_idx < len(favorites):
-                    new_order.append(favorites[orig_idx])
+            for idx, src in enumerate(_sort_items_input):
+                if src == s and idx not in used_indices:
+                    used_indices.add(idx)
+                    new_order.append(favorites[idx])
+                    break
         if len(new_order) == len(favorites):
             st.session_state["favorite_places"] = new_order
             st.rerun()
