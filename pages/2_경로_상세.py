@@ -1132,7 +1132,7 @@ if station_names:
         st.info("이 경로의 지하철역 교통약자 정보를 불러올 수 없습니다.")
 else:
     st.info("이 경로에는 지하철 구간이 없습니다.")
-
+    
 st.write("---")
 
 # ─── 6. AI 요약 브리핑 (Gemini Vision 도면 분석 포함) ───
