@@ -356,6 +356,12 @@ selected_dest = st_searchbox(
     key="destination_searchbox",
 )
 
+# 모바일 rerun 시 searchbox 선택값 손실 대비: 즉시 session_state 백업
+if selected_origin:
+    st.session_state["_sb_origin_cache"] = selected_origin
+if selected_dest:
+    st.session_state["_sb_dest_cache"] = selected_dest
+
 
 def _set_coord(state_key, name_key, place_dict):
     """선택된 카카오 place dict → session_state에 좌표 + 텍스트 저장."""
@@ -373,12 +379,15 @@ def _set_coord(state_key, name_key, place_dict):
 
 
 if st.button("경로 찾기", use_container_width=True, type="primary"):
-    if not selected_dest:
+    # 모바일 rerun으로 searchbox 값 잃었을 때 캐시에서 복원
+    final_origin = selected_origin or st.session_state.get("_sb_origin_cache")
+    final_dest = selected_dest or st.session_state.get("_sb_dest_cache")
+    if not final_dest:
         st.warning("도착지를 입력하고 자동완성에서 선택해주세요")
     else:
-        # 출발지 우선순위: searchbox 선택 > 이미 설정된 GPS/이전 값 > DEFAULT_ORIGIN
-        if selected_origin:
-            _set_coord("origin_coord", "origin_input", selected_origin)
+        # 출발지 우선순위: searchbox 선택(또는 캐시) > 이미 설정된 GPS/이전 값 > DEFAULT_ORIGIN
+        if final_origin:
+            _set_coord("origin_coord", "origin_input", final_origin)
             st.session_state["_prev_origin"] = st.session_state.get("origin_input", "")
         elif st.session_state.get("origin_coord") and st.session_state.get("origin_input", "").startswith("📍"):
             # GPS로 이미 설정됨 — 그대로 사용
@@ -388,8 +397,11 @@ if st.button("경로 찾기", use_container_width=True, type="primary"):
             st.session_state["origin_coord"] = DEFAULT_ORIGIN.copy()
             st.session_state["_prev_origin"] = "📍 현재 위치 (수원시 영통구)"
         # 도착지
-        _set_coord("dest_coord", "selected_destination", selected_dest)
+        _set_coord("dest_coord", "selected_destination", final_dest)
         st.session_state["_prev_destination"] = st.session_state.get("selected_destination", "")
+        # 캐시 소비 후 정리
+        st.session_state.pop("_sb_origin_cache", None)
+        st.session_state.pop("_sb_dest_cache", None)
         add_recent(
             origin_coord=st.session_state.get("origin_coord"),
             dest_coord=st.session_state.get("dest_coord"),
