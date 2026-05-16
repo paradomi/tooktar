@@ -389,7 +389,7 @@ function navigateTo(params) {
         'try { window.opener.top.location.href = ' + JSON.stringify(targetUrl) + '; } ' +
         'catch(e) { window.opener.location.href = ' + JSON.stringify(targetUrl) + '; }' +
         'window.close();' +
-        '<\/script></body></html>'
+        '<' + '/script></body></html>'
       );
       return;
     }
