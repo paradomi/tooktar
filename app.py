@@ -206,28 +206,74 @@ if st.session_state.get("edit_fav", False):
             st.rerun()
 
     st.write("")
+    st.caption("🟰 항목을 꾹 눌러 위아래로 드래그하면 순서가 바뀝니다")
+
+    from streamlit_sortables import sort_items
 
     favorites = st.session_state["favorite_places"]
-    for idx, place in enumerate(favorites):
-        c_icon, c_name, c_up, c_down, c_del = st.columns([1, 5, 1, 1, 1])
-        with c_icon:
-            st.markdown(f"### {place['icon']}")
-        with c_name:
-            st.markdown(f"**{place['label']}**")
-            st.caption(place['address'])
-        with c_up:
-            if idx > 0:
-                if st.button("⬆", key=f"up_{idx}", use_container_width=True):
-                    favorites[idx], favorites[idx - 1] = favorites[idx - 1], favorites[idx]
-                    st.rerun()
-        with c_down:
-            if idx < len(favorites) - 1:
-                if st.button("⬇", key=f"down_{idx}", use_container_width=True):
-                    favorites[idx], favorites[idx + 1] = favorites[idx + 1], favorites[idx]
-                    st.rerun()
-        with c_del:
-            if st.button("🗑", key=f"del_{idx}", use_container_width=True):
+
+    # 정렬 위젯 — 인덱스 prefix로 동일 표시 충돌 방지
+    _sort_items_input = [
+        f"[{i}] {p['icon']} {p['label']} · {p['address']}"
+        for i, p in enumerate(favorites)
+    ]
+    _sort_custom_css = """
+    .sortable-component { gap: 6px; }
+    .sortable-item {
+        background: white !important;
+        border: 2px solid #002F6C !important;
+        border-radius: 12px !important;
+        padding: 12px 16px !important;
+        font-size: 1.05rem !important;
+        font-weight: 600 !important;
+        color: #002F6C !important;
+        cursor: grab !important;
+        font-family: 'Gowun Batang','Noto Serif KR',serif !important;
+    }
+    .sortable-item:active { cursor: grabbing !important; }
+    """
+    _sorted = sort_items(
+        _sort_items_input,
+        direction="vertical",
+        custom_style=_sort_custom_css,
+        key="fav_sorter",
+    )
+    # 순서가 바뀌었으면 favorites 재정렬
+    import re as _re
+    if _sorted and _sorted != _sort_items_input:
+        new_order = []
+        for s in _sorted:
+            m = _re.match(r"\[(\d+)\]", s)
+            if m:
+                orig_idx = int(m.group(1))
+                if 0 <= orig_idx < len(favorites):
+                    new_order.append(favorites[orig_idx])
+        if len(new_order) == len(favorites):
+            st.session_state["favorite_places"] = new_order
+            st.rerun()
+
+    # 삭제 UI — 별도 영역
+    st.write("")
+    st.markdown(f'<div style="font-size:0.95rem;color:#666;margin-bottom:6px;">🗑 삭제할 항목 선택</div>',
+                unsafe_allow_html=True)
+    _del_options = [
+        f"{p['icon']} {p['label']} · {p['address']}"
+        for p in favorites
+    ]
+    _del_cols = st.columns([4, 1])
+    with _del_cols[0]:
+        _to_delete = st.selectbox(
+            "삭제할 항목",
+            options=["(선택하세요)"] + _del_options,
+            label_visibility="collapsed",
+            key="fav_del_select",
+        )
+    with _del_cols[1]:
+        if st.button("삭제", key="fav_del_btn", use_container_width=True):
+            if _to_delete and _to_delete != "(선택하세요)":
+                idx = _del_options.index(_to_delete)
                 favorites.pop(idx)
+                st.session_state["favorite_places"] = favorites
                 st.rerun()
 
 else:

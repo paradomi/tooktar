@@ -8,4 +8,5 @@ fastapi
 uvicorn[standard]
 streamlit-searchbox
 streamlit-js-eval
+streamlit-sortables
 google-genai
