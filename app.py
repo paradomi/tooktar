@@ -59,11 +59,26 @@ if "fav_act" in _qp:
             _i = int(_qp["idx"])
             _new_label = _qp.get("label", "")
             _new_icon = _qp.get("icon", "")
+            _new_address = _qp.get("address", "")
             if 0 <= _i < len(_favs_qp):
                 if _new_label:
                     _favs_qp[_i]["label"] = _new_label
                 if _new_icon:
                     _favs_qp[_i]["icon"] = _new_icon
+                if _new_address and _new_address != _favs_qp[_i].get("address", ""):
+                    # 카카오 geocode로 좌표 재조회
+                    from services.geocode import address_to_coord as _addr_to_coord
+                    _geo = _addr_to_coord(_new_address)
+                    if _geo:
+                        _favs_qp[_i]["address"] = _new_address
+                        _favs_qp[_i]["lng"] = _geo["lng"]
+                        _favs_qp[_i]["lat"] = _geo["lat"]
+                    else:
+                        # 실패 메시지 저장 (다음 페이지에서 표시)
+                        st.session_state["_fav_edit_error"] = (
+                            f"⚠️ '{_new_address}' 주소를 찾을 수 없어 좌표 업데이트에 실패했습니다. "
+                            f"다른 주소로 다시 시도해주세요."
+                        )
                 st.session_state["favorite_places"] = _favs_qp
         except (ValueError, KeyError):
             pass
@@ -187,6 +202,10 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+# 자주가는곳 편집 에러 메시지 (주소 geocoding 실패 등)
+if "_fav_edit_error" in st.session_state:
+    st.error(st.session_state.pop("_fav_edit_error"))
+
 # ─── 자주 가는 곳 헤더 + 편집 토글 (streamlit) ───
 _fav_left, _fav_right = st.columns([4, 1])
 with _fav_left:
@@ -283,7 +302,8 @@ body { margin: 0; padding: 4px; font-family: 'Gowun Batang', 'Noto Serif KR', se
 .edit-form { display: flex; gap: 6px; flex: 1; flex-wrap: wrap; align-items: center; }
 .edit-form input { padding: 6px 10px; border: 1px solid #ccc; border-radius: 6px; font-size: 0.95rem; font-family: inherit; }
 .edit-form .icon-input { width: 50px; text-align: center; }
-.edit-form .label-input { flex: 1; min-width: 80px; }
+.edit-form .label-input { flex: 0 0 100px; min-width: 80px; }
+.edit-form .address-input { flex: 1 1 100%; min-width: 0; }
 .save-btn, .cancel-btn { padding: 6px 10px; border: none; border-radius: 6px; cursor: pointer; font-size: 0.95rem; font-family: inherit; white-space: nowrap; }
 .save-btn { background: #002F6C; color: white; }
 .cancel-btn { background: #ccc; color: #333; }
@@ -321,19 +341,23 @@ function startEdit(idx) {
   if (nv) nv.style.display = 'none';
   const currentLabel = row.dataset.label;
   const currentIcon = row.dataset.icon;
+  const currentAddress = row.dataset.address || '';
   const form = document.createElement('div');
   form.className = 'edit-form';
   form.innerHTML = '<input class="icon-input" maxlength="3" value="' + currentIcon + '" title="아이콘">'
     + '<input class="label-input" value="' + currentLabel + '" placeholder="이름">'
     + '<button class="save-btn">저장</button>'
-    + '<button class="cancel-btn">취소</button>';
+    + '<button class="cancel-btn">취소</button>'
+    + '<input class="address-input" value="' + currentAddress.replace(/"/g, '&quot;') + '" placeholder="주소 (예: 수원시청, 아주대학교병원)">';
   const actionsEl = row.querySelector('.actions');
   row.insertBefore(form, actionsEl);
   form.querySelector('.save-btn').addEventListener('click', function() {
     const newLabel = form.querySelector('.label-input').value.trim();
     const newIcon = form.querySelector('.icon-input').value.trim();
+    const newAddress = form.querySelector('.address-input').value.trim();
     if (!newLabel) { alert('이름을 입력해주세요.'); return; }
-    navigateTo({fav_act: 'edit', idx: String(idx), label: newLabel, icon: newIcon});
+    if (!newAddress) { alert('주소를 입력해주세요.'); return; }
+    navigateTo({fav_act: 'edit', idx: String(idx), label: newLabel, icon: newIcon, address: newAddress});
   });
   form.querySelector('.cancel-btn').addEventListener('click', function() {
     row.classList.remove('editing');
@@ -376,7 +400,7 @@ function navigateTo(params) {
         _addr = (_p.get("address") or "").replace("&", "&amp;").replace('"', "&quot;").replace("<", "&lt;")
         _ico = (_p.get("icon") or "").replace('"', "&quot;")
         _rows_html.append(
-            f'<li class="row" data-orig-idx="{_i}" data-label="{_lbl}" data-icon="{_ico}">'
+            f'<li class="row" data-orig-idx="{_i}" data-label="{_lbl}" data-icon="{_ico}" data-address="{_addr}">'
             f'<div class="normal-view" style="display:flex;align-items:center;gap:10px;flex:1;min-width:0;">'
             f'<span class="icon">{_ico}</span>'
             f'<div class="info"><div class="lbl">{_lbl}</div><div class="addr">{_addr}</div></div>'
