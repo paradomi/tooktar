@@ -367,12 +367,39 @@ function startEdit(idx) {
 }
 
 function navigateTo(params) {
+  // iframe sandbox(allow-top-navigation 없음) 때문에 직접 top navigation 불가.
+  // allow-popups-to-escape-sandbox 활용: 팝업을 열어 sandbox 벗어난 후 거기서 opener.top 조작
+  let targetUrl;
   try {
     const url = new URL(window.top.location.href);
     Object.keys(params).forEach(function(k) { url.searchParams.set(k, params[k]); });
+    targetUrl = url.toString();
+  } catch(err) {
+    targetUrl = window.location.pathname + '?' +
+      Object.keys(params).map(function(k) {
+        return encodeURIComponent(k) + '=' + encodeURIComponent(params[k]);
+      }).join('&');
+  }
+
+  try {
+    const popup = window.open('', '_blank', 'width=1,height=1,left=-1000,top=-1000');
+    if (popup) {
+      popup.document.write(
+        '<!DOCTYPE html><html><body><script>' +
+        'try { window.opener.top.location.href = ' + JSON.stringify(targetUrl) + '; } ' +
+        'catch(e) { window.opener.location.href = ' + JSON.stringify(targetUrl) + '; }' +
+        'window.close();' +
+        '<\/script></body></html>'
+      );
+      return;
+    }
+  } catch(err) {}
+
+  // 최후 fallback: top 직접 시도 (대부분 sandbox에 막힘)
+  try {
     const a = document.createElement('a');
     a.target = '_top';
-    a.href = url.toString();
+    a.href = targetUrl;
     a.style.display = 'none';
     document.body.appendChild(a);
     a.click();
