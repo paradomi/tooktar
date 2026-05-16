@@ -279,10 +279,21 @@ else:
     # MUI 카드 시각 효과는 CSS 인젝션으로 보강
     st.markdown(f"""
     <style>
+    /* st.columns(2) 모바일에서도 2컬럼 유지 (기본 collapse 차단) */
+    [data-testid="stMain"] [data-testid="stHorizontalBlock"] {{
+        flex-wrap: nowrap !important;
+        gap: 0.75rem !important;
+    }}
+    [data-testid="stMain"] [data-testid="stHorizontalBlock"] > [data-testid="stColumn"] {{
+        width: calc(50% - 0.375rem) !important;
+        flex: 1 1 calc(50% - 0.375rem) !important;
+        min-width: 0 !important;
+    }}
     [data-testid="stMain"] [data-testid="stButton"] > button[kind="secondary"]:has(strong) {{
         aspect-ratio: 1 / 1;
         height: auto;
-        min-height: 180px;
+        min-height: 140px;
+        max-height: 220px;
         border: 2px solid {NAVY} !important;
         border-radius: 20px !important;
         background: white !important;
@@ -298,13 +309,13 @@ else:
         border-color: {NAVY} !important;
     }}
     [data-testid="stMain"] [data-testid="stButton"] > button[kind="secondary"]:has(strong) p {{
-        font-size: 5rem;
+        font-size: clamp(2.5rem, 12vw, 5rem);
         line-height: 1;
         margin: 0;
         white-space: pre-line;
     }}
     [data-testid="stMain"] [data-testid="stButton"] > button[kind="secondary"]:has(strong) strong {{
-        font-size: 1.6rem;
+        font-size: clamp(1rem, 4vw, 1.6rem);
         font-weight: 700;
         color: {NAVY};
     }}
