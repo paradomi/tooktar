@@ -34,6 +34,45 @@ st.set_page_config(
 
 apply_global_styles()
 
+# ─── 자주가는곳 URL 쿼리 파라미터 처리 (SortableJS iframe → top frame 액션) ───
+_qp = st.query_params
+if "fav_act" in _qp:
+    _act = _qp["fav_act"]
+    _favs_qp = st.session_state.get("favorite_places", [])
+    if _act == "reorder":
+        try:
+            _new_idx = [int(x) for x in _qp["order"].split(",")]
+            if sorted(_new_idx) == list(range(len(_favs_qp))):
+                st.session_state["favorite_places"] = [_favs_qp[i] for i in _new_idx]
+        except (ValueError, KeyError):
+            pass
+    elif _act == "delete":
+        try:
+            _i = int(_qp["idx"])
+            if 0 <= _i < len(_favs_qp):
+                _favs_qp.pop(_i)
+                st.session_state["favorite_places"] = _favs_qp
+        except (ValueError, KeyError):
+            pass
+    elif _act == "edit":
+        try:
+            _i = int(_qp["idx"])
+            _new_label = _qp.get("label", "")
+            _new_icon = _qp.get("icon", "")
+            if 0 <= _i < len(_favs_qp):
+                if _new_label:
+                    _favs_qp[_i]["label"] = _new_label
+                if _new_icon:
+                    _favs_qp[_i]["icon"] = _new_icon
+                st.session_state["favorite_places"] = _favs_qp
+        except (ValueError, KeyError):
+            pass
+    # 쿼리 파라미터 정리 (무한 루프 방지)
+    st.query_params.clear()
+    # 액션 처리 후 편집 모드 유지
+    st.session_state["edit_fav"] = True
+    st.rerun()
+
 # Streamlit 기본 헤더 숨김 + 네이비 테마 일관 디자인
 st.markdown(f"""
 <style>
@@ -164,7 +203,11 @@ with _fav_right:
 
 # ─── 자주 가는 곳 본체 ───
 if st.session_state.get("edit_fav", False):
-    # ── 편집 모드: 자동완성 검색 + 추가 ──
+    import streamlit.components.v1 as _components
+
+    favorites = st.session_state["favorite_places"]
+
+    # ── 새 장소 추가 폼 (편집 모드 상단) ──
     icon_options = ["🏠", "🏢", "🏥", "🏫", "🛒", "👨‍👩‍👧", "⛪", "🏛️", "🏋️", "🍽️", "☕", "📚"]
     col1, col2 = st.columns([1, 3])
     with col1:
@@ -206,88 +249,151 @@ if st.session_state.get("edit_fav", False):
             st.rerun()
 
     st.write("")
-    st.caption("🟰 항목을 꾹 눌러 위아래로 드래그하면 순서가 바뀝니다")
 
-    from streamlit_sortables import sort_items
+    # ── SortableJS 기반 드래그 + 인라인 편집/삭제 ──
+    _FAV_HTML_TEMPLATE = """<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<link href="https://fonts.googleapis.com/css2?family=Gowun+Batang:wght@400;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js"></script>
+<style>
+body { margin: 0; padding: 4px; font-family: 'Gowun Batang', 'Noto Serif KR', serif; background: white; }
+#list { list-style: none; padding: 0; margin: 0; }
+.row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 12px 14px; margin-bottom: 8px;
+  background: white; border: 2px solid #002F6C; border-radius: 12px;
+  min-height: 56px; box-sizing: border-box;
+}
+.row.dragging { opacity: 0.6; transform: scale(0.98); }
+.icon { font-size: 1.6rem; flex-shrink: 0; }
+.info { flex: 1; min-width: 0; overflow: hidden; }
+.info .lbl { font-weight: 700; color: #002F6C; font-size: 1.05rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.info .addr { font-size: 0.85rem; color: #666; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.actions { display: flex; gap: 6px; flex-shrink: 0; align-items: center; }
+.actions button {
+  width: 36px; height: 36px; border: none; background: rgba(0,47,108,0.08);
+  border-radius: 8px; cursor: pointer; font-size: 1rem; padding: 0;
+}
+.actions button:hover { background: rgba(0,47,108,0.18); }
+.handle { cursor: grab; color: #888; user-select: none; font-size: 1.4rem; padding: 0 4px; line-height: 1; }
+.handle:active { cursor: grabbing; }
+.row.editing { background: #FFF8E1; border-color: #FFA726; }
+.edit-form { display: flex; gap: 6px; flex: 1; flex-wrap: wrap; align-items: center; }
+.edit-form input { padding: 6px 10px; border: 1px solid #ccc; border-radius: 6px; font-size: 0.95rem; font-family: inherit; }
+.edit-form .icon-input { width: 50px; text-align: center; }
+.edit-form .label-input { flex: 1; min-width: 80px; }
+.save-btn, .cancel-btn { padding: 6px 10px; border: none; border-radius: 6px; cursor: pointer; font-size: 0.95rem; font-family: inherit; white-space: nowrap; }
+.save-btn { background: #002F6C; color: white; }
+.cancel-btn { background: #ccc; color: #333; }
+</style>
+</head>
+<body>
+<ul id="list">
+__ROWS__
+</ul>
+<script>
+const list = document.getElementById('list');
+Sortable.create(list, {
+  handle: '.handle',
+  animation: 150,
+  chosenClass: 'dragging',
+  onEnd: function() {
+    const order = Array.from(list.children).map(function(li) { return li.dataset.origIdx; });
+    navigateTo({fav_act: 'reorder', order: order.join(',')});
+  }
+});
 
-    favorites = st.session_state["favorite_places"]
+function deleteItem(idx) {
+  if (!confirm('삭제할까요?')) return;
+  navigateTo({fav_act: 'delete', idx: String(idx)});
+}
 
-    # 편집 모드: 컬럼 모바일 collapse 차단 + 드래그/버튼 스타일
-    st.markdown("""
-    <style>
-    [data-testid="stMain"] [data-testid="stHorizontalBlock"] {
-        flex-wrap: nowrap !important;
-        gap: 8px !important;
-    }
-    [data-testid="stMain"] [data-testid="stHorizontalBlock"] > [data-testid="stColumn"] {
-        min-width: 0 !important;
-    }
-    div[data-testid="stButton"] button[key^="del_fav_"] {
-        min-height: 50px !important;
-        height: 50px !important;
-        border-radius: 12px !important;
-        padding: 0 !important;
-        margin-bottom: 6px !important;
-    }
-    </style>
-    """, unsafe_allow_html=True)
+function startEdit(idx) {
+  document.querySelectorAll('.row').forEach(function(r) { r.classList.remove('editing'); });
+  document.querySelectorAll('.edit-form').forEach(function(f) { f.remove(); });
+  document.querySelectorAll('.normal-view').forEach(function(v) { v.style.display = ''; });
+  const row = document.querySelector('li[data-orig-idx="' + idx + '"]');
+  if (!row) return;
+  row.classList.add('editing');
+  const nv = row.querySelector('.normal-view');
+  if (nv) nv.style.display = 'none';
+  const currentLabel = row.dataset.label;
+  const currentIcon = row.dataset.icon;
+  const form = document.createElement('div');
+  form.className = 'edit-form';
+  form.innerHTML = '<input class="icon-input" maxlength="3" value="' + currentIcon + '" title="아이콘">'
+    + '<input class="label-input" value="' + currentLabel + '" placeholder="이름">'
+    + '<button class="save-btn">저장</button>'
+    + '<button class="cancel-btn">취소</button>';
+  const actionsEl = row.querySelector('.actions');
+  row.insertBefore(form, actionsEl);
+  form.querySelector('.save-btn').addEventListener('click', function() {
+    const newLabel = form.querySelector('.label-input').value.trim();
+    const newIcon = form.querySelector('.icon-input').value.trim();
+    if (!newLabel) { alert('이름을 입력해주세요.'); return; }
+    navigateTo({fav_act: 'edit', idx: String(idx), label: newLabel, icon: newIcon});
+  });
+  form.querySelector('.cancel-btn').addEventListener('click', function() {
+    row.classList.remove('editing');
+    if (nv) nv.style.display = '';
+    form.remove();
+  });
+}
 
-    # 표시 항목 (인덱스 prefix/suffix 없이 깔끔하게)
-    _sort_items_input = [
-        f"{p['icon']} {p['label']} · {p['address']}"
-        for p in favorites
-    ]
-    _sort_custom_css = """
-    .sortable-component { gap: 6px; }
-    .sortable-item {
-        background: white !important;
-        border: 2px solid #002F6C !important;
-        border-radius: 12px !important;
-        padding: 12px 16px !important;
-        min-height: 50px !important;
-        height: 50px !important;
-        box-sizing: border-box !important;
-        font-size: 1.05rem !important;
-        font-weight: 600 !important;
-        color: #002F6C !important;
-        cursor: grab !important;
-        font-family: 'Gowun Batang','Noto Serif KR',serif !important;
-        margin: 0 0 6px 0 !important;
-        display: flex !important;
-        align-items: center !important;
-    }
-    .sortable-item:active { cursor: grabbing !important; }
-    """
+function navigateTo(params) {
+  try {
+    const url = new URL(window.top.location.href);
+    Object.keys(params).forEach(function(k) { url.searchParams.set(k, params[k]); });
+    const a = document.createElement('a');
+    a.target = '_top';
+    a.href = url.toString();
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+  } catch(e) {
+    const f = document.createElement('form');
+    f.method = 'GET';
+    f.target = '_top';
+    f.action = window.location.pathname;
+    Object.keys(params).forEach(function(k) {
+      const inp = document.createElement('input');
+      inp.type = 'hidden'; inp.name = k; inp.value = params[k];
+      f.appendChild(inp);
+    });
+    document.body.appendChild(f);
+    f.submit();
+  }
+}
+</script>
+</body>
+</html>"""
 
-    # 좌: 드래그 리스트 / 우: 삭제 버튼 stack
-    _list_col, _del_col = st.columns([5, 1])
-    with _list_col:
-        _sorted = sort_items(
-            _sort_items_input,
-            direction="vertical",
-            custom_style=_sort_custom_css,
-            key="fav_sorter",
+    _rows_html = []
+    for _i, _p in enumerate(favorites):
+        _lbl = (_p.get("label") or "").replace("&", "&amp;").replace('"', "&quot;").replace("<", "&lt;")
+        _addr = (_p.get("address") or "").replace("&", "&amp;").replace('"', "&quot;").replace("<", "&lt;")
+        _ico = (_p.get("icon") or "").replace('"', "&quot;")
+        _rows_html.append(
+            f'<li class="row" data-orig-idx="{_i}" data-label="{_lbl}" data-icon="{_ico}">'
+            f'<div class="normal-view" style="display:flex;align-items:center;gap:10px;flex:1;min-width:0;">'
+            f'<span class="icon">{_ico}</span>'
+            f'<div class="info"><div class="lbl">{_lbl}</div><div class="addr">{_addr}</div></div>'
+            f'</div>'
+            f'<div class="actions">'
+            f'<button onclick="startEdit({_i})" title="편집">✏️</button>'
+            f'<button onclick="deleteItem({_i})" title="삭제">🗑</button>'
+            f'<span class="handle" title="드래그하여 순서 변경">&#8801;</span>'
+            f'</div>'
+            f'</li>'
         )
-    with _del_col:
-        for i in range(len(favorites)):
-            if st.button("🗑", key=f"del_fav_{i}", use_container_width=True):
-                favorites.pop(i)
-                st.session_state["favorite_places"] = favorites
-                st.rerun()
 
-    # 순서가 바뀌었으면 favorites 재정렬 (문자열 매칭, 중복 인덱스 추적)
-    if _sorted and _sorted != _sort_items_input:
-        used_indices = set()
-        new_order = []
-        for s in _sorted:
-            for idx, src in enumerate(_sort_items_input):
-                if src == s and idx not in used_indices:
-                    used_indices.add(idx)
-                    new_order.append(favorites[idx])
-                    break
-        if len(new_order) == len(favorites):
-            st.session_state["favorite_places"] = new_order
-            st.rerun()
+    _full_html = _FAV_HTML_TEMPLATE.replace("__ROWS__", "\n".join(_rows_html))
+    _h = max(200, 60 + 80 * len(favorites))
+    _components.html(_full_html, height=_h, scrolling=False)
+
+    st.caption("✏️ 편집은 이름과 아이콘만 가능합니다. 주소 변경은 삭제 후 재추가하세요.")
 
 else:
     # ── 일반 모드: streamlit 버튼 그리드 (정사각형, NAVY 테두리) ──
