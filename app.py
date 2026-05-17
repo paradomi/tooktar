@@ -560,7 +560,10 @@ if st.button("경로 찾기", use_container_width=True, type="primary"):
             origin_name=st.session_state.get("origin_input", "").replace("📍 ", ""),
             dest_name=st.session_state.get("selected_destination", ""),
         )
-        st.switch_page("pages/1_경로_탐색.py")
+        # _pending_nav 패턴 — 다음 rerun 상단 핸들러가 switch_page 처리.
+        # (모바일에서 인라인 switch_page가 가끔 안 먹는 케이스 대응)
+        st.session_state["_pending_nav"] = "pages/1_경로_탐색.py"
+        st.rerun()
 
 # ─── 최근 검색 섹션 ───
 recents = load_recent()
