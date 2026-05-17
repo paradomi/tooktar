@@ -28,21 +28,21 @@ st.markdown("""
 }
 /* 모드 카드 — viewport 반응형, 데스크톱·모바일 모두 자연스럽게 */
 [data-testid="stMain"] [data-testid="stButton"] > button:has(strong) {
-    min-height: 90px;
-    max-height: 130px;
+    min-height: 110px;
+    max-height: 160px;
     aspect-ratio: 1 / 1.05;
     white-space: pre-line;
     line-height: 1.1;
-    padding: 6px 4px;
-    gap: 0.2rem;
+    padding: 10px 6px;
+    gap: 0.3rem;
 }
 [data-testid="stMain"] [data-testid="stButton"] > button:has(strong) p {
     margin: 0;
-    font-size: clamp(1.4rem, 7vw, 2.6rem);
+    font-size: clamp(2rem, 9vw, 3rem);
     line-height: 1;
 }
 [data-testid="stMain"] [data-testid="stButton"] > button:has(strong) strong {
-    font-size: clamp(0.85rem, 3.5vw, 1.4rem);
+    font-size: clamp(1.1rem, 4.8vw, 1.7rem);
     font-weight: 700;
 }
 </style>
