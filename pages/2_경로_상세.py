@@ -984,8 +984,10 @@ for _i, step in enumerate(steps):
         # 실시간 도착정보 (버스=GBIS, 지하철=한국철도공사)
         arrival_html = ""
         if stype == "subway":
-            # 지하철 도착 시각 (캐시, 방향별 분리)
-            sub_ck = f"sub_arr_v2_{start_nm}_{end_nm}"
+            # 지하철 도착 시각 (캐시, 방향별 분리, 30초 단위 자동 무효화)
+            import time as _time
+            _bucket = int(_time.time() // 30)
+            sub_ck = f"sub_arr_v3_{start_nm}_{end_nm}_{_bucket}"
             if sub_ck in st.session_state:
                 sub_info = st.session_state[sub_ck]
             else:
@@ -1039,7 +1041,9 @@ for _i, step in enumerate(steps):
             station_id = step.get("start_id")
             ods_city = step.get("city_code")
             start_nm_for_bus = step.get("start_name", "")
-            cache_k = f"bus_arr_v2_{station_id}_{bus_no}_{sx}_{sy}"
+            import time as _time
+            _b_bucket = int(_time.time() // 30)
+            cache_k = f"bus_arr_v3_{station_id}_{bus_no}_{sx}_{sy}_{_b_bucket}"
             if cache_k in st.session_state:
                 arrivals = st.session_state[cache_k]
             else:
