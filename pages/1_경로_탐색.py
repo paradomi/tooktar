@@ -18,20 +18,31 @@ apply_global_styles()
 
 st.markdown("""
 <style>
+/* st.columns(3) 모바일에서도 가로 3분할 유지 */
+[data-testid="stMain"] [data-testid="stHorizontalBlock"] {
+    flex-wrap: nowrap !important;
+    gap: 6px !important;
+}
+[data-testid="stMain"] [data-testid="stHorizontalBlock"] > [data-testid="stColumn"] {
+    min-width: 0 !important;
+}
+/* 모드 카드 — viewport 반응형, 데스크톱·모바일 모두 자연스럽게 */
 [data-testid="stMain"] [data-testid="stButton"] > button:has(strong) {
-    min-height: 140px;
+    min-height: 90px;
+    max-height: 130px;
+    aspect-ratio: 1 / 1.05;
     white-space: pre-line;
-    line-height: 1.2;
-    padding: 0.8rem 0.4rem;
-    gap: 0.3rem;
+    line-height: 1.1;
+    padding: 6px 4px;
+    gap: 0.2rem;
 }
 [data-testid="stMain"] [data-testid="stButton"] > button:has(strong) p {
     margin: 0;
-    font-size: 3rem;
+    font-size: clamp(1.4rem, 7vw, 2.6rem);
     line-height: 1;
 }
 [data-testid="stMain"] [data-testid="stButton"] > button:has(strong) strong {
-    font-size: 2rem;
+    font-size: clamp(0.85rem, 3.5vw, 1.4rem);
     font-weight: 700;
 }
 </style>
