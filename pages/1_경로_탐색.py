@@ -45,6 +45,10 @@ st.markdown("""
     font-size: clamp(1.1rem, 4.8vw, 1.7rem);
     font-weight: 700;
 }
+/* 휠체어 맞춤(2번째 컬럼)은 글자가 길어 살짝 작게 */
+[data-testid="stMain"] [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]:nth-child(2) [data-testid="stButton"] > button:has(strong) strong {
+    font-size: clamp(0.95rem, 4vw, 1.5rem);
+}
 </style>
 """, unsafe_allow_html=True)
 
