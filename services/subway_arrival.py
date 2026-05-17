@@ -227,6 +227,7 @@ def get_next_trains(rail_op_cd, ln_cd, stin_cd, limit=3, window_min=120, to_stin
                 "minutes_until": max(0, int(round(diff_min))),
                 "destination": entry["destination"],
                 "train_no": entry["train_no"],
+                "dpt_iso": dt.isoformat(),  # 캐시 후 시간 재계산용 절대시각
             })
 
         results.sort(key=lambda x: x["minutes_until"])

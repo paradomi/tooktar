@@ -984,27 +984,64 @@ for _i, step in enumerate(steps):
         # 실시간 도착정보 (버스=GBIS, 지하철=한국철도공사)
         arrival_html = ""
         if stype == "subway":
-            # 지하철 도착 시각 (캐시, 방향별 분리, 30초 단위 자동 무효화)
+            # 지하철 시각표는 정적 → 5분 캐시. 매 렌더마다 dpt_iso 기반으로 minutes_until 재계산.
             import time as _time
-            _bucket = int(_time.time() // 30)
-            sub_ck = f"sub_arr_v3_{start_nm}_{end_nm}_{_bucket}"
+            import datetime as _dt
+            _bucket = int(_time.time() // 300)  # 5분 버킷
+            sub_ck = f"sub_arr_v4_{start_nm}_{end_nm}_{_bucket}"
             if sub_ck in st.session_state:
-                sub_info = st.session_state[sub_ck]
+                sub_info_cached = st.session_state[sub_ck]
             else:
                 codes = _find_station_codes(start_nm)
                 end_codes = _find_station_codes(end_nm) if end_nm else None
                 to_cd = end_codes[2] if end_codes else None
                 if codes:
                     rail_op, ln_cd_v, stin_cd_v, _ = codes
-                    sub_info = _get_next_trains(
-                        rail_op, ln_cd_v, stin_cd_v, limit=2, to_stin_cd=to_cd
+                    # limit 크게 잡아 캐시 윈도우 동안 충분히 사용
+                    sub_info_cached = _get_next_trains(
+                        rail_op, ln_cd_v, stin_cd_v, limit=10, to_stin_cd=to_cd
                     )
                 else:
-                    sub_info = {"trains": [], "last_dpt": None, "status": "no_data"}
-                st.session_state[sub_ck] = sub_info
-            sub_status = sub_info.get("status", "no_data") if isinstance(sub_info, dict) else "no_data"
-            sub_trains = sub_info.get("trains", []) if isinstance(sub_info, dict) else []
-            sub_last_dpt = sub_info.get("last_dpt") if isinstance(sub_info, dict) else None
+                    sub_info_cached = {"trains": [], "last_dpt": None, "status": "no_data"}
+                st.session_state[sub_ck] = sub_info_cached
+
+            # 캐시된 절대시각(dpt_iso)으로 현재 minutes_until 재계산
+            _now_dt = _dt.datetime.now()
+            _raw_trains = sub_info_cached.get("trains", []) if isinstance(sub_info_cached, dict) else []
+            _fresh_trains = []
+            for _t in _raw_trains:
+                _iso = _t.get("dpt_iso")
+                if _iso:
+                    try:
+                        _d = _dt.datetime.fromisoformat(_iso)
+                        _m = (_d - _now_dt).total_seconds() / 60
+                        if _m < -1:
+                            continue  # 지나간 열차 제외
+                        _fresh_trains.append({
+                            **_t,
+                            "minutes_until": max(0, int(round(_m))),
+                        })
+                    except (ValueError, TypeError):
+                        continue
+                else:
+                    _fresh_trains.append(_t)  # backward-compat
+            _fresh_trains.sort(key=lambda x: x.get("minutes_until", 9999))
+            _fresh_trains = _fresh_trains[:2]  # 화면 표시는 2개
+
+            # status 재판정
+            _last_dpt_cached = sub_info_cached.get("last_dpt") if isinstance(sub_info_cached, dict) else None
+            if _fresh_trains:
+                sub_info = {"trains": _fresh_trains, "last_dpt": _last_dpt_cached, "status": "ok"}
+            elif _last_dpt_cached:
+                sub_info = {"trains": [], "last_dpt": _last_dpt_cached, "status": "after_last"}
+            elif (sub_info_cached.get("status") if isinstance(sub_info_cached, dict) else None) == "after_last":
+                sub_info = {"trains": [], "last_dpt": _last_dpt_cached, "status": "after_last"}
+            else:
+                sub_info = {"trains": [], "last_dpt": None, "status": "no_data"}
+
+            sub_status = sub_info.get("status", "no_data")
+            sub_trains = sub_info.get("trains", [])
+            sub_last_dpt = sub_info.get("last_dpt")
             if sub_status == "ok" and sub_trains:
                 badges = []
                 for t in sub_trains:
@@ -1042,7 +1079,7 @@ for _i, step in enumerate(steps):
             ods_city = step.get("city_code")
             start_nm_for_bus = step.get("start_name", "")
             import time as _time
-            _b_bucket = int(_time.time() // 30)
+            _b_bucket = int(_time.time() // 60)  # 60초 버킷 (실시간 데이터라 짧게)
             cache_k = f"bus_arr_v3_{station_id}_{bus_no}_{sx}_{sy}_{_b_bucket}"
             if cache_k in st.session_state:
                 arrivals = st.session_state[cache_k]
