@@ -1323,13 +1323,3 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-st.write("")
-
-# ─── 액션 버튼 ───
-_act1, _act2 = st.columns(2)
-with _act1:
-    if st.button("🔊 음성 안내", key="action_voice", use_container_width=True):
-        st.toast("음성 안내를 시작합니다")
-with _act2:
-    if st.button("📤 보호자 공유", key="action_share", use_container_width=True, type="primary"):
-        st.toast("보호자에게 경로를 공유했습니다")
