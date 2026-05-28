@@ -694,11 +694,17 @@ for idx, step in enumerate(steps):
         new_start = _resolve_exit_coord(station_nm, ex, ey, preferred_exit_no=_pref)
         if new_start:
             sx, sy = new_start
+    # 환승 도보 여부: 앞뒤가 모두 transit(지하철/버스)
+    _is_transfer = (
+        prev_step and prev_step.get("type") in ("subway", "bus")
+        and next_step and next_step.get("type") in ("subway", "bus")
+    )
     _walk_specs.append({
         "sx": sx, "sy": sy, "ex": ex, "ey": ey,
         "cache_key": f"tmap_walk_{sx}_{sy}_{ex}_{ey}_opt{_search_option}",
         "start_name": step.get("start_name", "출발"),
         "end_name": step.get("end_name", "도착"),
+        "is_transfer": bool(_is_transfer),
     })
 
 # ── Phase 2: 캐시 안 된 walk만 Tmap 병렬 호출 ──
@@ -717,8 +723,9 @@ if _uncached_walks:
             if coords:
                 st.session_state[ck] = coords
 
-# ── Phase 3: walk_lines 조립 (원래 순서) ──
+# ── Phase 3: walk_lines 조립 (원래 순서) + 환승 지점 수집 ──
 walk_lines = []
+transfer_points = []  # 환승 마커용 [{lat, lng}]
 for w in _walk_specs:
     tmap_coords = st.session_state.get(w["cache_key"])
     if tmap_coords:
@@ -729,6 +736,14 @@ for w in _walk_specs:
             {"lat": float(w["ey"]), "lng": float(w["ex"])},
         ]
     walk_lines.append({"coords": coords, "color": _walk_color})
+    # 환승 도보: 시작·끝 중간 지점에 마커 (역내 환승이면 두 점이 거의 같아 한 점)
+    if w.get("is_transfer"):
+        try:
+            _mid_lat = (float(w["sy"]) + float(w["ey"])) / 2
+            _mid_lng = (float(w["sx"]) + float(w["ex"])) / 2
+            transfer_points.append({"lat": _mid_lat, "lng": _mid_lng})
+        except (TypeError, ValueError):
+            pass
 
 all_coords = []
 for sec in lane_sections:
@@ -748,6 +763,7 @@ center_lng = sum(c["lng"] for c in all_coords) / len(all_coords)
 
 sections_json = json.dumps(lane_sections, ensure_ascii=False)
 walk_json = json.dumps(walk_lines, ensure_ascii=False)
+transfer_json = json.dumps(transfer_points, ensure_ascii=False)
 
 origin_name = origin_coord.get("name", "출발") if origin_coord else "출발"
 dest_name = dest_coord.get("name", "도착") if dest_coord else "도착"
@@ -866,6 +882,19 @@ kakao.maps.load(function() {{
       map: map, path: path,
       strokeWeight: 5, strokeColor: w.color,
       strokeOpacity: 1.0, strokeStyle: 'shortdashdot'
+    }});
+  }});
+
+  // 환승 지점 마커 (역내 환승 등 도보가 짧아 선이 안 보이는 곳 표시)
+  var transfers = {transfer_json};
+  transfers.forEach(function(tp) {{
+    var pos = new kakao.maps.LatLng(tp.lat, tp.lng);
+    bounds.extend(pos);
+    new kakao.maps.CustomOverlay({{
+      map: map, position: pos, yAnchor: 0.5, xAnchor: 0.5, zIndex: 90,
+      content: '<div style="background:#7B1FA2;color:white;border:2px solid white;'
+        + 'border-radius:14px;padding:3px 9px;font-size:12px;font-weight:700;'
+        + 'box-shadow:0 1px 4px rgba(0,0,0,0.3);white-space:nowrap;">🔄 환승</div>'
     }});
   }});
 
