@@ -20,6 +20,7 @@ from services.bus_arrival import has_low_floor_arriving as _has_lf_arriving
 from services.bus_arrival import has_low_floor_on_route as _has_lf_route
 from services.subway_arrival import get_next_trains as _get_next_trains
 from services.rail_portal import find_station_codes as _find_station_codes
+from services.rail_portal import find_station_codes_on_line as _find_codes_on_line
 from services.kakao_local import find_nearest_exit as _find_nearest_exit
 from services.kakao_local import find_station_exits as _find_station_exits
 from services.ai_briefing import generate_briefing as _gen_briefing
@@ -1001,8 +1002,10 @@ for _i, step in enumerate(steps):
             if sub_ck in st.session_state:
                 sub_info_cached = st.session_state[sub_ck]
             else:
-                codes = _find_station_codes(start_nm)
-                end_codes = _find_station_codes(end_nm) if end_nm else None
+                # 환승역 대응: ODsay step의 노선명으로 정확한 노선의 역코드 조회
+                _ln_name = step.get("line_name", "")
+                codes = _find_codes_on_line(start_nm, _ln_name)
+                end_codes = _find_codes_on_line(end_nm, _ln_name) if end_nm else None
                 to_cd = end_codes[2] if end_codes else None
                 if codes:
                     rail_op, ln_cd_v, stin_cd_v, _ = codes

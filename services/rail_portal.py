@@ -55,6 +55,57 @@ def find_station_codes(station_name: str):
     )
 
 
+def _norm_line_name(name):
+    """노선명 정규화: '수도권 수인.분당선' → '수인분당', '1호선' → '1호'."""
+    return (name or "").replace("수도권", "").replace(" ", "").replace(".", "").replace("선", "").strip()
+
+
+def find_station_codes_on_line(station_name: str, line_name: str):
+    """역명 + 노선명으로 정확한 (railOprIsttCd, lnCd, stinCd, 역명) 반환.
+
+    환승역(같은 역명이 여러 노선에 존재)에서 올바른 노선의 역코드를 고른다.
+    예: 이매 → 경강선 'K411' vs 수인분당선 'K227(이매(성남아트센터))'.
+
+    - line_name이 비었거나 CSV에 해당 노선이 없으면 find_station_codes로 fallback.
+    - 노선은 찾았지만 그 노선에 해당 역이 없으면 None (잘못된 노선 정보 방지).
+    """
+    if not station_name:
+        return None
+    target_line = _norm_line_name(line_name)
+    if not target_line:
+        return find_station_codes(station_name)
+
+    df = _load_station_codes()
+    if df is None or df.empty:
+        return None
+
+    name = station_name.strip()
+    if name.endswith("역"):
+        name = name[:-1]
+
+    # 노선 필터 (정규화 비교)
+    line_mask = df["LN_NM"].apply(lambda x: _norm_line_name(str(x)) == target_line)
+    sub = df[line_mask]
+    if sub.empty:
+        # CSV에 해당 노선명이 없음 → 기존 동작
+        return find_station_codes(station_name)
+
+    exact = sub[sub["STIN_NM"] == name]
+    if not exact.empty:
+        row = exact.iloc[0]
+    else:
+        partial = sub[sub["STIN_NM"].str.startswith(name, na=False)]
+        if partial.empty:
+            return None  # 이 노선에 해당 역 없음 → 잘못된 정보 표시 방지
+        row = partial.iloc[0]
+    return (
+        str(row["RAIL_OPR_ISTT_CD"]),
+        str(row["LN_CD"]),
+        str(row["STIN_CD"]),
+        str(row["STIN_NM"]),
+    )
+
+
 def _call_kric(service_id: str, op_id: str, **params):
     """KRIC API 공통 호출 헬퍼. 실패 시 빈 리스트."""
     api_key = os.getenv("KRIC", "")
