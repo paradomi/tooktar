@@ -251,6 +251,11 @@ def _first_bus_minutes(route):
     return 9999
 
 
+def _arr_group(route):
+    """실시간 버스 도착정보 있으면 0(위), 없으면 1(아래)."""
+    return 0 if _first_bus_minutes(route) < 9999 else 1
+
+
 if current_mode == "wheel":
     def _route_lf_score(route):
         rid = route.get("id", 0)
@@ -316,7 +321,8 @@ if current_mode == "wheel":
 
     scored.sort(key=lambda x: (
         _lf_tier(x[1]),
-        _first_bus_minutes(x[0]),    # 같은 티어 내 버스 빨리 오는 순
+        _arr_group(x[0]),            # 도착정보 없는 경로는 같은 티어 내 아래로
+        _first_bus_minutes(x[0]),    # 버스 빨리 오는 순
         x[0].get("total_walk", 0),
         x[0].get("transfers", 0),
         x[0]["total_minutes"],
@@ -332,10 +338,12 @@ if current_mode == "wheel":
     if numeric_scores and max(numeric_scores) < 1.0:
         st.info("⚠️ 30분 이내 저상버스가 도착하는 경로가 제한적입니다. 위쪽 경로일수록 휠체어 친화도가 높습니다.")
 elif current_mode == "walk_less":
-    routes = sorted(routes, key=lambda r: (r.get("total_walk", 0), _first_bus_minutes(r), r["total_minutes"]))
+    # 도착정보 없는 경로는 아래로, 그 안에서 도보 짧은 순
+    routes = sorted(routes, key=lambda r: (_arr_group(r), r.get("total_walk", 0), r["total_minutes"]))
     routes_with_scores = [(r, None, _first_bus_arrival(r)) for r in routes]
 else:
-    routes = sorted(routes, key=lambda r: (r["total_minutes"], _first_bus_minutes(r)))
+    # 빠른 길: 버스 빨리 오는 순 우선, 도착정보 없는 경로는 맨 아래
+    routes = sorted(routes, key=lambda r: (_first_bus_minutes(r), r["total_minutes"]))
     routes_with_scores = [(r, None, _first_bus_arrival(r)) for r in routes]
 
 for item in routes_with_scores:
