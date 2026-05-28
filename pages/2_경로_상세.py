@@ -142,13 +142,19 @@ def _adjacent_station(line_cd, start_num, direction):
     return None
 
 
-def _direction_label(start_name, end_name):
+def _direction_label(start_name, end_name, line_name=None):
     """ODsay subway step의 (start_name, end_name)으로 (종점, 인접역) 방면 라벨 생성.
-    실패 시 '{end_name} 방면' fallback."""
+    실패 시 '{end_name} 방면' fallback. line_name 주면 환승역 노선 정확히 매칭."""
     fallback = f"{end_name} 방면"
     if not start_name or not end_name:
         return fallback
-    ln_cd = _line_cd_of_station(start_name)
+    ln_cd = None
+    if line_name:
+        _c = _find_codes_on_line(start_name, line_name)
+        if _c:
+            ln_cd = _c[1]
+    if not ln_cd:
+        ln_cd = _line_cd_of_station(start_name)
     if not ln_cd:
         return fallback
     start_num = _stin_num(_stin_cd_of(ln_cd, start_name))
@@ -984,7 +990,7 @@ for _i, step in enumerate(steps):
 
         # 지하철: (종점, 인접역) 방면 자동 추론, 버스는 단순 도착역 방면
         if stype == "subway":
-            direction_label = _direction_label(start_nm, end_nm)
+            direction_label = _direction_label(start_nm, end_nm, step.get("line_name", ""))
         else:
             direction_label = f"{end_nm} 방면"
         # 방면 앞에 출발 정류소 이름 prefix (| 구분자)
@@ -1207,17 +1213,20 @@ st.markdown("### ♿ 교통약자 시설 정보")
 
 subway_steps = [s for s in steps if s["type"] == "subway"]
 station_names = []
+_station_lines = {}  # {역명: ODsay 노선명} — 환승역 노선 구분용
 _seen = set()
 for s in subway_steps:
+    _ln = s.get("line_name", "")
     for nm in (s.get("start_name", ""), s.get("end_name", "")):
         if nm and nm not in _seen:
             station_names.append(nm)
+            _station_lines[nm] = _ln
             _seen.add(nm)
 
 if station_names:
     # KRIC 역코드 매핑 (캐시)
     from services.rail_portal import (
-        find_station_codes, get_station_movement,
+        get_station_movement,
         get_elevator_movement, get_transfer_movement, get_wheelchair_lift,
     )
 
@@ -1225,11 +1234,13 @@ if station_names:
     # 캐시된 역 먼저 로드
     _uncached = []
     for nm in station_names:
-        cache_key = f"kric_{nm}"
+        _ln_nm = _station_lines.get(nm, "")
+        cache_key = f"kric_{nm}_{_ln_nm}"  # 노선 포함 (환승역 충돌 방지)
         if cache_key in st.session_state:
             station_data[nm] = st.session_state[cache_key]
             continue
-        codes = find_station_codes(nm)  # CSV lru_cache, 빠름
+        # 노선 인지 조회 (환승역에서 올바른 노선의 역코드)
+        codes = _find_codes_on_line(nm, _ln_nm)
         if not codes:
             continue
         _uncached.append((nm, codes))
@@ -1266,7 +1277,7 @@ if station_names:
                 "lift": _collected.get(nm, {}).get("lift", []),
             }
             station_data[nm] = info
-            st.session_state[f"kric_{nm}"] = info
+            st.session_state[f"kric_{nm}_{_station_lines.get(nm, '')}"] = info
 
     if station_data:
         names = list(station_data.keys())
@@ -1309,7 +1320,7 @@ if _route_mode == "wheel":
     if _first_subway:
         _sub_start = _first_subway.get("start_name", "")
         _sub_end = _first_subway.get("end_name", "")
-        _sub_dir = _direction_label(_sub_start, _sub_end)
+        _sub_dir = _direction_label(_sub_start, _sub_end, _first_subway.get("line_name", ""))
         # station_data에서 도면 imgPath 추출
         _sd = (station_data or {}).get(_sub_start)
         if _sd:
