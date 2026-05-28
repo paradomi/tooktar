@@ -1323,3 +1323,73 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+# ─── 음성 안내 (브라우저 TTS) ───
+import json as _json
+# 음성용 평문: 마크다운(**)·이모지·기호 제거
+_tts_text = _re.sub(r"\*\*", "", _briefing_text)
+_tts_text = _re.sub(r"[\U0001F000-\U0001FAFF\U00002600-\U000027BF\U0001F1E6-\U0001F1FF←-⇿⌀-⏿]", "", _tts_text)
+_tts_text = _re.sub(r"[•·▶►]", " ", _tts_text)
+_tts_text = _re.sub(r"\n+", ". ", _tts_text)
+_tts_text = _re.sub(r"\s{2,}", " ", _tts_text).strip()
+_tts_json = _json.dumps(_tts_text, ensure_ascii=False)
+
+_tts_html = """
+<style>
+  body { margin: 0; font-family: 'Noto Sans KR', sans-serif; }
+  .tts-btn {
+    width: 100%; min-height: 50px; border: 2px solid #002F6C;
+    border-radius: 12px; background: white; color: #002F6C;
+    font-size: 1.05rem; font-weight: 700; cursor: pointer;
+    display: flex; align-items: center; justify-content: center; gap: 8px;
+    transition: background 0.15s;
+  }
+  .tts-btn:hover { background: rgba(0,47,108,0.06); }
+  .tts-btn.playing { background: #002F6C; color: white; }
+</style>
+<button id="ttsBtn" class="tts-btn">🔊 음성으로 듣기</button>
+<script>
+const btn = document.getElementById('ttsBtn');
+const text = __TTS_TEXT__;
+let speaking = false;
+
+function pickKoVoice() {
+  const voices = window.speechSynthesis.getVoices();
+  return voices.find(v => v.lang && v.lang.toLowerCase().startsWith('ko')) || null;
+}
+
+function stopTTS() {
+  window.speechSynthesis.cancel();
+  speaking = false;
+  btn.classList.remove('playing');
+  btn.textContent = '🔊 음성으로 듣기';
+}
+
+function startTTS() {
+  window.speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(text);
+  u.lang = 'ko-KR';
+  u.rate = 0.95;
+  u.pitch = 1.0;
+  const v = pickKoVoice();
+  if (v) u.voice = v;
+  u.onend = function() { stopTTS(); };
+  u.onerror = function() { stopTTS(); };
+  window.speechSynthesis.speak(u);
+  speaking = true;
+  btn.classList.add('playing');
+  btn.textContent = '⏸ 정지';
+}
+
+btn.addEventListener('click', function() {
+  if (speaking) { stopTTS(); } else { startTTS(); }
+});
+
+// 일부 브라우저는 voices가 비동기 로드됨
+if (window.speechSynthesis.onvoiceschanged !== undefined) {
+  window.speechSynthesis.onvoiceschanged = pickKoVoice;
+}
+</script>
+"""
+_tts_html = _tts_html.replace("__TTS_TEXT__", _tts_json)
+components.html(_tts_html, height=70)
+
