@@ -368,30 +368,16 @@ def tago_arrivals(city_code, node_id):
 
 
 def get_arrivals(station_id=None, lng=None, lat=None, city_code_hint=None, station_name=None):
-    """통합 도착정보 호출.
-    1) ODsay busCityCode 또는 카카오로 경기도 판별
-    2) 경기도 → GBIS (station_id + station_name+좌표 fallback)
-    3) 그 외 → TAGO fallback (정류장 검색 권한 시)
+    """통합 도착정보 호출 (속도 최적화).
+    GBIS(경기도) 먼저 시도 → 빈 결과면 TAGO(전국) fallback.
+    카카오 지역 판별 호출은 제거 — GBIS가 빈 결과면 자연히 TAGO로 넘어가므로
+    별도 reverse geocoding 불필요(정류장당 1회 호출·최대 5초 절감).
     """
-    is_gg = None
-    if city_code_hint is not None:
-        try:
-            is_gg = 1100 <= int(city_code_hint) <= 1199
-        except (TypeError, ValueError):
-            is_gg = None
-    if is_gg is None and lng is not None and lat is not None:
-        result = _is_gyeonggi_by_kakao(lng, lat)
-        if isinstance(result, tuple):
-            is_gg = result[1]
-
-    if is_gg or is_gg is None:
-        gbis = gbis_arrivals(station_id, station_name=station_name, lng=lng, lat=lat)
-        if gbis:
-            return gbis
+    gbis = gbis_arrivals(station_id, station_name=station_name, lng=lng, lat=lat)
+    if gbis:
+        return gbis
     if lng is not None and lat is not None:
         node_info = tago_find_node_id(lng, lat)
         if node_info:
             return tago_arrivals(node_info["city_code"], node_info["node_id"])
-    if station_id and not (is_gg or is_gg is None):
-        return gbis_arrivals(station_id, station_name=station_name, lng=lng, lat=lat)
     return []

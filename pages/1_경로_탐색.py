@@ -210,7 +210,8 @@ if _to_fetch:
         else f"🚌 버스 실시간 도착 정보 확인 중... ({len(_to_fetch)}개 정류장)"
     )
     with st.spinner(_spinner_msg):
-        with ThreadPoolExecutor(max_workers=6) as ex:
+        _workers = min(max(len(_to_fetch), 1), 12)
+        with ThreadPoolExecutor(max_workers=_workers) as ex:
             _results = list(ex.map(lambda x: _fetch_arrivals(x[1]), _to_fetch))
         for (ck, _), res in zip(_to_fetch, _results):
             st.session_state[ck] = res or []
