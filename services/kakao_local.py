@@ -66,6 +66,7 @@ def find_station_exits(station_name: str, max_exits: int = 12):
     - 출구/출입구, 공백 변형 모두 허용
     """
     import re
+    from concurrent.futures import ThreadPoolExecutor
     if not station_name:
         return {}
     nm = station_name.rstrip("역").strip()
@@ -74,24 +75,29 @@ def find_station_exits(station_name: str, max_exits: int = 12):
     nm_clean = nm.replace(" ", "")
     target_token = f"{nm_clean}역"  # 예: "야탑역", "수원시청역"
 
-    exits = {}
-    for n in range(1, max_exits + 1):
+    def _probe(n):
+        """N번 출구 1개 조회 → (n, (lng, lat)) 또는 None."""
         docs = search_places(f"{nm}역 {n}번 출구", size=1)
         if not docs:
-            continue
+            return None
         d = docs[0]
         place_raw = d.get("place_name") or ""
         place = place_raw.replace(" ", "")
-        # 1) 역명 일치 (다른 역의 동일 번호 결과 차단)
-        if target_token not in place:
-            continue
-        # 2) 출구 번호 + 출구/출입구 매칭 (공백·접미 변형 허용)
+        if target_token not in place:  # 다른 역 동일 번호 차단
+            return None
         if not re.search(rf"\b{n}번\s*출[구입]구?", place_raw) and not re.search(rf"{n}번출[구입]구?", place):
-            continue
+            return None
         try:
-            exits[n] = (float(d["x"]), float(d["y"]))
+            return (n, (float(d["x"]), float(d["y"])))
         except (KeyError, TypeError, ValueError):
-            continue
+            return None
+
+    # N=1..max_exits 동시 조회 (순차 12회 → 병렬)
+    exits = {}
+    with ThreadPoolExecutor(max_workers=max_exits) as ex:
+        for res in ex.map(_probe, range(1, max_exits + 1)):
+            if res:
+                exits[res[0]] = res[1]
     return exits
 
 

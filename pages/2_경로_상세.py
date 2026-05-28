@@ -644,13 +644,14 @@ if lane_data and "lane" in lane_data:
 origin_coord = st.session_state.get("origin_coord", {})
 dest_coord = st.session_state.get("dest_coord", {})
 
-walk_lines = []
+import re as _re_exit
+# ── Phase 1: 각 walk step 좌표 계산 (출구 보정 포함, 빠름) ──
+_walk_specs = []  # [{sx,sy,ex,ey,cache_key,start_name,end_name}, ...]
 for idx, step in enumerate(steps):
     if step["type"] != "walk":
         continue
     sx, sy = step.get("start_x"), step.get("start_y")
     ex, ey = step.get("end_x"), step.get("end_y")
-    # 인접 step에서 좌표 보충
     if not (sx and sy):
         for j in range(idx - 1, -1, -1):
             ps = steps[j]
@@ -672,11 +673,6 @@ for idx, step in enumerate(steps):
     # 지하철 출구 기반 끝점 보정
     prev_step = steps[idx - 1] if idx > 0 else None
     next_step = steps[idx + 1] if idx + 1 < len(steps) else None
-
-    import re as _re_exit
-    # 다음 step이 subway → walk 끝점을 출구 좌표로 보정
-    #   Tier1: walk의 end_name에서 "N번 출구" 추출 → 그 출구
-    #   Tier2: walk 시작점에 가장 가까운 출구
     if next_step and next_step.get("type") == "subway":
         station_nm = next_step.get("start_name", "")
         _m = _re_exit.search(r"(\d+)번\s*출구", step.get("end_name", "") or "")
@@ -684,8 +680,6 @@ for idx, step in enumerate(steps):
         new_end = _resolve_exit_coord(station_nm, sx, sy, preferred_exit_no=_pref)
         if new_end:
             ex, ey = new_end
-
-    # 이전 step이 subway → walk 시작점을 출구 좌표로 보정
     if prev_step and prev_step.get("type") == "subway":
         station_nm = prev_step.get("end_name", "")
         _m = _re_exit.search(r"(\d+)번\s*출구", step.get("start_name", "") or "")
@@ -693,24 +687,39 @@ for idx, step in enumerate(steps):
         new_start = _resolve_exit_coord(station_nm, ex, ey, preferred_exit_no=_pref)
         if new_start:
             sx, sy = new_start
+    _walk_specs.append({
+        "sx": sx, "sy": sy, "ex": ex, "ey": ey,
+        "cache_key": f"tmap_walk_{sx}_{sy}_{ex}_{ey}_opt{_search_option}",
+        "start_name": step.get("start_name", "출발"),
+        "end_name": step.get("end_name", "도착"),
+    })
 
-    cache_key = f"tmap_walk_{sx}_{sy}_{ex}_{ey}_opt{_search_option}"
-    tmap_coords = st.session_state.get(cache_key)
-    if not tmap_coords:
-        tmap_coords = pedestrian_route(
-            sx, sy, ex, ey,
-            start_name=step.get("start_name", "출발"),
-            end_name=step.get("end_name", "도착"),
+# ── Phase 2: 캐시 안 된 walk만 Tmap 병렬 호출 ──
+_uncached_walks = [w for w in _walk_specs if w["cache_key"] not in st.session_state]
+if _uncached_walks:
+    from concurrent.futures import ThreadPoolExecutor as _WTPE
+
+    def _fetch_walk(w):
+        return w["cache_key"], pedestrian_route(
+            w["sx"], w["sy"], w["ex"], w["ey"],
+            start_name=w["start_name"], end_name=w["end_name"],
             search_option=_search_option,
         )
-        if tmap_coords:
-            st.session_state[cache_key] = tmap_coords
+    with _WTPE(max_workers=min(len(_uncached_walks), 8)) as _wex:
+        for ck, coords in _wex.map(_fetch_walk, _uncached_walks):
+            if coords:
+                st.session_state[ck] = coords
+
+# ── Phase 3: walk_lines 조립 (원래 순서) ──
+walk_lines = []
+for w in _walk_specs:
+    tmap_coords = st.session_state.get(w["cache_key"])
     if tmap_coords:
         coords = tmap_coords
     else:
         coords = [
-            {"lat": float(sy), "lng": float(sx)},
-            {"lat": float(ey), "lng": float(ex)},
+            {"lat": float(w["sy"]), "lng": float(w["sx"])},
+            {"lat": float(w["ey"]), "lng": float(w["ex"])},
         ]
     walk_lines.append({"coords": coords, "color": _walk_color})
 
@@ -1210,25 +1219,51 @@ if station_names:
     )
 
     station_data = {}  # {역명: {codes, movement, elevator, transfer, lift, full_name}}
+    # 캐시된 역 먼저 로드
+    _uncached = []
     for nm in station_names:
         cache_key = f"kric_{nm}"
         if cache_key in st.session_state:
             station_data[nm] = st.session_state[cache_key]
             continue
-        codes = find_station_codes(nm)
+        codes = find_station_codes(nm)  # CSV lru_cache, 빠름
         if not codes:
             continue
-        rail_op, ln, stin, full_nm = codes
-        info = {
-            "codes": (rail_op, ln, stin),
-            "full_name": full_nm,
-            "movement": get_station_movement(rail_op, ln, stin),
-            "elevator": get_elevator_movement(rail_op, ln, stin),
-            "transfer": get_transfer_movement(rail_op, ln, stin),
-            "lift": get_wheelchair_lift(rail_op, ln, stin),
+        _uncached.append((nm, codes))
+
+    # 캐시 안 된 역의 4개 KRIC endpoint를 모두 병렬 호출
+    if _uncached:
+        from concurrent.futures import ThreadPoolExecutor as _TPE
+        _kric_fns = {
+            "movement": get_station_movement,
+            "elevator": get_elevator_movement,
+            "transfer": get_transfer_movement,
+            "lift": get_wheelchair_lift,
         }
-        station_data[nm] = info
-        st.session_state[cache_key] = info
+        _futures = {}
+        with _TPE(max_workers=min(len(_uncached) * 4, 16)) as _ex:
+            for nm, codes in _uncached:
+                rail_op, ln, stin, _full = codes
+                for field, fn in _kric_fns.items():
+                    _futures[_ex.submit(fn, rail_op, ln, stin)] = (nm, field)
+            _collected = {}
+            for fut, (nm, field) in _futures.items():
+                try:
+                    _collected.setdefault(nm, {})[field] = fut.result()
+                except Exception:
+                    _collected.setdefault(nm, {})[field] = []
+        for nm, codes in _uncached:
+            rail_op, ln, stin, full_nm = codes
+            info = {
+                "codes": (rail_op, ln, stin),
+                "full_name": full_nm,
+                "movement": _collected.get(nm, {}).get("movement", []),
+                "elevator": _collected.get(nm, {}).get("elevator", []),
+                "transfer": _collected.get(nm, {}).get("transfer", []),
+                "lift": _collected.get(nm, {}).get("lift", []),
+            }
+            station_data[nm] = info
+            st.session_state[f"kric_{nm}"] = info
 
     if station_data:
         names = list(station_data.keys())
