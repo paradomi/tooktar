@@ -323,9 +323,9 @@ if current_mode == "wheel":
         _lf_tier(x[1]),
         _arr_group(x[0]),            # 도착정보 없는 경로는 같은 티어 내 아래로
         _first_bus_minutes(x[0]),    # 버스 빨리 오는 순
+        x[0]["total_minutes"],       # 도착 같으면 총시간 짧은 순 (긴 건 뒤로)
         x[0].get("total_walk", 0),
         x[0].get("transfers", 0),
-        x[0]["total_minutes"],
     ))
 
     def _norm_score_for_card(s):
