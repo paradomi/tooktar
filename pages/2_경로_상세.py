@@ -431,21 +431,45 @@ def _cached_station_exits(station_name):
     return exits
 
 
-def _nearest_exit(station_name, lng, lat):
-    if lng is None or lat is None:
-        return None
+def _nearest_exit(station_name, lng, lat, allowed=None):
+    """타겟 좌표에 가장 가까운 출구 번호.
+    allowed(접근 가능 출구 번호 집합)가 주어지면 그 안에서만 고른다.
+    좌표가 없거나 Kakao에 접근가능 출구 좌표가 없으면, 접근가능 출구 중 최소 번호라도 반환."""
+    allowed = {str(a) for a in allowed} if allowed else None
     exits = _cached_station_exits(station_name)
     if not exits:
+        if allowed:
+            return sorted(allowed, key=lambda x: int(x))[0]
+        return None
+    cand = exits
+    if allowed:
+        cand = {no: c for no, c in exits.items() if str(no) in allowed}
+        if not cand:
+            return sorted(allowed, key=lambda x: int(x))[0]
+    if lng is None or lat is None:
+        if allowed:
+            return sorted(allowed, key=lambda x: int(x))[0]
         return None
     best_no, best_d = None, float("inf")
-    for no, (ex_lng, ex_lat) in exits.items():
+    for no, (ex_lng, ex_lat) in cand.items():
         d = (ex_lng - lng) ** 2 + (ex_lat - lat) ** 2
         if d < best_d:
             best_d, best_no = d, no
     return best_no
 
 
-def _infer_subway_exits(steps, origin_coord, dest_coord):
+def _same_station(a, b):
+    """역명 정규화 비교 (괄호 부가명·'역' 접미사·공백 제거)."""
+    def _norm(x):
+        x = (x or "").split("(")[0].strip()
+        if x.endswith("역"):
+            x = x[:-1]
+        return x.strip()
+    a, b = _norm(a), _norm(b)
+    return bool(a) and a == b
+
+
+def _infer_subway_exits(steps, origin_coord, dest_coord, accessible_map=None):
     """경로 step 흐름에서 각 지하철역의 진입/하차 출구 추론.
     Returns: {station_name: {"in": "7번", "out": "10번"}}
     """
@@ -458,6 +482,26 @@ def _infer_subway_exits(steps, origin_coord, dest_coord):
         end_name = s.get("end_name", "")
         if not st_name:
             continue
+        # 역 내 환승 감지: 도보를 건너뛰고 직전/직후 transit step을 찾아,
+        # 같은 역(역명 일치)에서의 지하철↔지하철 환승이면 출구를 거치지 않음.
+        _prev_transit = None
+        for j in range(i - 1, -1, -1):
+            if steps[j].get("type") in ("subway", "bus"):
+                _prev_transit = steps[j]
+                break
+        _next_transit = None
+        for j in range(i + 1, len(steps)):
+            if steps[j].get("type") in ("subway", "bus"):
+                _next_transit = steps[j]
+                break
+        internal_in = bool(
+            _prev_transit and _prev_transit.get("type") == "subway"
+            and _same_station(_prev_transit.get("end_name", ""), st_name)
+        )
+        internal_out = bool(
+            _next_transit and _next_transit.get("type") == "subway"
+            and _same_station(_next_transit.get("start_name", ""), end_name)
+        )
         # 진입 좌표: 사용자가 "출발한 곳" — 이전 walk의 start (또는 이전 transit의 end)
         in_lng = in_lat = None
         in_exit_from_name = None
@@ -482,10 +526,15 @@ def _infer_subway_exits(steps, origin_coord, dest_coord):
         if in_lng is None and origin_coord:
             in_lng = origin_coord.get("lng")
             in_lat = origin_coord.get("lat")
-        if in_exit_from_name:
+        _allowed_in = accessible_map.get(st_name) if accessible_map else None
+        if _allowed_in and in_exit_from_name:
+            _mn = re.search(r"\d+", in_exit_from_name)
+            if _mn and _mn.group() not in {str(a) for a in _allowed_in}:
+                in_exit_from_name = None
+        if in_exit_from_name and not internal_in:
             result.setdefault(st_name, {})["in"] = in_exit_from_name
-        elif in_lng and in_lat:
-            no = _nearest_exit(st_name, in_lng, in_lat)
+        elif ((in_lng and in_lat) or _allowed_in) and not internal_in:
+            no = _nearest_exit(st_name, in_lng, in_lat, allowed=_allowed_in)
             if no:
                 result.setdefault(st_name, {})["in"] = f"{no}번"
 
@@ -514,13 +563,35 @@ def _infer_subway_exits(steps, origin_coord, dest_coord):
             if out_lng is None and dest_coord:
                 out_lng = dest_coord.get("lng")
                 out_lat = dest_coord.get("lat")
-            if out_exit_from_name:
+            _allowed_out = accessible_map.get(end_name) if accessible_map else None
+            if _allowed_out and out_exit_from_name:
+                _mo = re.search(r"\d+", out_exit_from_name)
+                if _mo and _mo.group() not in {str(a) for a in _allowed_out}:
+                    out_exit_from_name = None
+            if out_exit_from_name and not internal_out:
                 result.setdefault(end_name, {})["out"] = out_exit_from_name
-            elif out_lng and out_lat:
-                no = _nearest_exit(end_name, out_lng, out_lat)
+            elif ((out_lng and out_lat) or _allowed_out) and not internal_out:
+                no = _nearest_exit(end_name, out_lng, out_lat, allowed=_allowed_out)
                 if no:
                     result.setdefault(end_name, {})["out"] = f"{no}번"
     return result
+
+
+def _exit_has_elevator(info, exit_no):
+    """KRIC 이동경로(movement) 데이터에서 해당 출구 번호 접근로에 엘리베이터가
+    언급되는지 검사. info는 station_data[역명] dict, exit_no는 '7번' 형태."""
+    import re
+    if not info or not exit_no:
+        return False
+    n = re.search(r"\d+", exit_no)
+    if not n:
+        return False
+    n = n.group()
+    for item in (info.get("movement", []) or []):
+        path = (item.get("stMovePath", "") or "") + " " + (item.get("edMovePath", "") or "")
+        if n in re.findall(r"\d+", path) and "엘리베이터" in path:
+            return True
+    return False
 
 
 def _resolve_exit_coord(station_name, target_lng, target_lat, preferred_exit_no=None):
@@ -652,6 +723,87 @@ origin_coord = st.session_state.get("origin_coord", {})
 dest_coord = st.session_state.get("dest_coord", {})
 
 import re as _re_exit
+
+# ─── 지하철 출구 추론 + KRIC 시설 데이터 미리 조회 (안내 카드에서 사용) ───
+dest_name = dest_coord.get("name", "도착") if dest_coord else "도착"
+
+subway_steps = [s for s in steps if s["type"] == "subway"]
+station_names = []
+_station_lines = {}  # {역명: ODsay 노선명} — 환승역 노선 구분용
+_seen = set()
+for s in subway_steps:
+    _ln = s.get("line_name", "")
+    for nm in (s.get("start_name", ""), s.get("end_name", "")):
+        if nm and nm not in _seen:
+            station_names.append(nm)
+            _station_lines[nm] = _ln
+            _seen.add(nm)
+
+station_data = {}  # {역명: {codes, movement, elevator, transfer, lift, full_name}}
+if station_names:
+    from services.rail_portal import (
+        get_station_movement,
+        get_elevator_movement, get_transfer_movement, get_wheelchair_lift,
+    )
+    _uncached = []
+    for nm in station_names:
+        _ln_nm = _station_lines.get(nm, "")
+        cache_key = f"kric_{nm}_{_ln_nm}"  # 노선 포함 (환승역 충돌 방지)
+        if cache_key in st.session_state:
+            station_data[nm] = st.session_state[cache_key]
+            continue
+        codes = _find_codes_on_line(nm, _ln_nm)
+        if not codes:
+            continue
+        _uncached.append((nm, codes))
+    if _uncached:
+        from concurrent.futures import ThreadPoolExecutor as _TPE
+        _kric_fns = {
+            "movement": get_station_movement,
+            "elevator": get_elevator_movement,
+            "transfer": get_transfer_movement,
+            "lift": get_wheelchair_lift,
+        }
+        _futures = {}
+        with _TPE(max_workers=min(len(_uncached) * 4, 16)) as _ex:
+            for nm, codes in _uncached:
+                rail_op, ln, stin, _full = codes
+                for field, fn in _kric_fns.items():
+                    _futures[_ex.submit(fn, rail_op, ln, stin)] = (nm, field)
+            _collected = {}
+            for fut, (nm, field) in _futures.items():
+                try:
+                    _collected.setdefault(nm, {})[field] = fut.result()
+                except Exception:
+                    _collected.setdefault(nm, {})[field] = []
+        for nm, codes in _uncached:
+            rail_op, ln, stin, full_nm = codes
+            info = {
+                "codes": (rail_op, ln, stin),
+                "full_name": full_nm,
+                "movement": _collected.get(nm, {}).get("movement", []),
+                "elevator": _collected.get(nm, {}).get("elevator", []),
+                "transfer": _collected.get(nm, {}).get("transfer", []),
+                "lift": _collected.get(nm, {}).get("lift", []),
+            }
+            station_data[nm] = info
+            st.session_state[f"kric_{nm}_{_station_lines.get(nm, '')}"] = info
+
+# 휠체어 모드: KRIC 엘리베이터(접근 가능) 출구로 추천을 제한 (시설 패널과 일치)
+_accessible_exits = {}
+if _route_mode == "wheel":
+    import re as _re_acc
+    for _nm, _info in station_data.items():
+        _nums = set()
+        for _it in (_info.get("movement", []) or []):
+            for _n in _re_acc.findall(r"(\d+)번", _it.get("stMovePath", "") or ""):
+                _nums.add(_n)
+        if _nums:
+            _accessible_exits[_nm] = _nums
+_subway_exits = _infer_subway_exits(
+    steps, origin_coord, dest_coord, _accessible_exits or None
+)
+
 # ── Phase 1: 각 walk step 좌표 계산 (출구 보정 포함, 빠름) ──
 _walk_specs = []  # [{sx,sy,ex,ey,cache_key,start_name,end_name}, ...]
 for idx, step in enumerate(steps):
@@ -682,15 +834,26 @@ for idx, step in enumerate(steps):
     next_step = steps[idx + 1] if idx + 1 < len(steps) else None
     if next_step and next_step.get("type") == "subway":
         station_nm = next_step.get("start_name", "")
-        _m = _re_exit.search(r"(\d+)번\s*출구", step.get("end_name", "") or "")
-        _pref = _m.group(1) if _m else None
+        # 추천(접근 가능) 출구 우선, 없으면 정규식 fallback
+        _se = _subway_exits.get(station_nm, {}).get("in")
+        if _se:
+            _sm = _re_exit.search(r"\d+", _se)
+            _pref = _sm.group() if _sm else None
+        else:
+            _m = _re_exit.search(r"(\d+)번\s*출구", step.get("end_name", "") or "")
+            _pref = _m.group(1) if _m else None
         new_end = _resolve_exit_coord(station_nm, sx, sy, preferred_exit_no=_pref)
         if new_end:
             ex, ey = new_end
     if prev_step and prev_step.get("type") == "subway":
         station_nm = prev_step.get("end_name", "")
-        _m = _re_exit.search(r"(\d+)번\s*출구", step.get("start_name", "") or "")
-        _pref = _m.group(1) if _m else None
+        _se = _subway_exits.get(station_nm, {}).get("out")
+        if _se:
+            _sm = _re_exit.search(r"\d+", _se)
+            _pref = _sm.group() if _sm else None
+        else:
+            _m = _re_exit.search(r"(\d+)번\s*출구", step.get("start_name", "") or "")
+            _pref = _m.group(1) if _m else None
         new_start = _resolve_exit_coord(station_nm, ex, ey, preferred_exit_no=_pref)
         if new_start:
             sx, sy = new_start
@@ -1052,8 +1215,9 @@ for _i, step in enumerate(steps):
                     sub_info_cached = {"trains": [], "last_dpt": None, "status": "no_data"}
                 st.session_state[sub_ck] = sub_info_cached
 
-            # 캐시된 절대시각(dpt_iso)으로 현재 minutes_until 재계산
-            _now_dt = _dt.datetime.now()
+            # 캐시된 절대시각(dpt_iso)으로 현재 minutes_until 재계산 (KST 고정)
+            from zoneinfo import ZoneInfo as _ZI
+            _now_dt = _dt.datetime.now(_ZI("Asia/Seoul")).replace(tzinfo=None)
             _raw_trains = sub_info_cached.get("trains", []) if isinstance(sub_info_cached, dict) else []
             _fresh_trains = []
             for _t in _raw_trains:
@@ -1177,6 +1341,24 @@ for _i, step in enumerate(steps):
                     )
 
         _gf = "'Gowun Batang', 'Noto Serif KR', serif"
+        # 지하철: 진입/하차 출구 안내 (엘리베이터 접근로면 주석)
+        exit_html = ""
+        if stype == "subway":
+            _in_ex = _subway_exits.get(start_nm, {}).get("in")
+            _out_ex = _subway_exits.get(end_nm, {}).get("out")
+            _eparts = []
+            if _in_ex:
+                _ev = " <span style='color:#2DB400;font-weight:700;'>· 엘리베이터</span>" if _exit_has_elevator(station_data.get(start_nm), _in_ex) else ""
+                _eparts.append(f"<b style='color:{NAVY};'>{start_nm} {_in_ex} 출구</b>로 진입{_ev}")
+            if _out_ex:
+                _ev = " <span style='color:#2DB400;font-weight:700;'>· 엘리베이터</span>" if _exit_has_elevator(station_data.get(end_nm), _out_ex) else ""
+                _eparts.append(f"<b style='color:{NAVY};'>{end_nm} {_out_ex} 출구</b>로 나가기{_ev}")
+            if _eparts:
+                exit_html = (
+                    f'<div style="background:rgba(45,180,0,0.08);border-radius:8px;'
+                    f'padding:8px 12px;margin:6px 0;font-size:{fs_body}px;color:#333;'
+                    f'font-family:{_gf};">🚪 ' + " · ".join(_eparts) + '</div>'
+                )
         st.markdown(
             f'<div style="padding:14px 18px;background:#f8f9fa;'
             f'border-left:5px solid {border_color};margin-bottom:6px;'
@@ -1195,6 +1377,7 @@ for _i, step in enumerate(steps):
             f'<span style="color:#666;font-size:{max(fs_body - 2, 12)}px;">하차</span>'
             f'<b style="color:{NAVY};">{end_nm}</b>'
             f'</div>'
+            f'{exit_html}'
             f'<div style="font-size:{max(fs_body - 2, 13)}px;color:#666;'
             f'font-family:{_gf};">'
             f'{station_count}{meta_unit} · {section_time}분 이동</div>'
@@ -1215,11 +1398,26 @@ for _i, step in enumerate(steps):
             except Exception:
                 pass
             _dist_str = f" ({_dist_m}m)" if _dist_m else ""
-            _label = f"🔄 환승 도보 <b>{_sec}분</b>{_dist_str}"
+            # 같은 역 지하철↔지하철 환승이면 '역 안 이동'으로 표기
+            _pv = steps[_i - 1] if _i > 0 else {}
+            _nx = steps[_i + 1] if _i + 1 < len(steps) else {}
+            _internal_xfer = (
+                _pv.get("type") == "subway" and _nx.get("type") == "subway"
+                and _same_station(_pv.get("end_name", ""), _nx.get("start_name", ""))
+            )
+            if _internal_xfer:
+                _stn = (_pv.get("end_name", "") or "").split("(")[0].strip()
+                _label = f"🔄 <b>{_stn}역</b> 환승 · {_sec}분 (역 안 이동)"
+            else:
+                _label = f"🔄 환승 도보 <b>{_sec}분</b>{_dist_str}"
             _bg = "#f3e5f5"  # 연보라
             _fg = "#4A148C"
         else:
             _label = f"{icon} {step['desc']}"
+            if _i == 0 and origin_name:
+                _label = f"{icon} <b>{origin_name}</b> 출발 · {step['desc']}"
+            elif _i == len(steps) - 1 and dest_name:
+                _label = f"{icon} {step['desc']} · <b>{dest_name}</b> 도착"
             _bg = "#f8f9fa"
             _fg = "#333"
         st.markdown(
@@ -1234,80 +1432,10 @@ for _i, step in enumerate(steps):
 
 st.write("---")
 
-# 지하철역 진입/하차 출구 자동 추론 (도보 좌표 + 카카오 출구 좌표 매칭)
-_subway_exits = _infer_subway_exits(steps, origin_coord, dest_coord)
-
 # ─── 5. 교통약자 시설 정보 (카카오맵 지하철역 임베드) ───
 st.markdown("### ♿ 교통약자 시설 정보")
 
-subway_steps = [s for s in steps if s["type"] == "subway"]
-station_names = []
-_station_lines = {}  # {역명: ODsay 노선명} — 환승역 노선 구분용
-_seen = set()
-for s in subway_steps:
-    _ln = s.get("line_name", "")
-    for nm in (s.get("start_name", ""), s.get("end_name", "")):
-        if nm and nm not in _seen:
-            station_names.append(nm)
-            _station_lines[nm] = _ln
-            _seen.add(nm)
-
 if station_names:
-    # KRIC 역코드 매핑 (캐시)
-    from services.rail_portal import (
-        get_station_movement,
-        get_elevator_movement, get_transfer_movement, get_wheelchair_lift,
-    )
-
-    station_data = {}  # {역명: {codes, movement, elevator, transfer, lift, full_name}}
-    # 캐시된 역 먼저 로드
-    _uncached = []
-    for nm in station_names:
-        _ln_nm = _station_lines.get(nm, "")
-        cache_key = f"kric_{nm}_{_ln_nm}"  # 노선 포함 (환승역 충돌 방지)
-        if cache_key in st.session_state:
-            station_data[nm] = st.session_state[cache_key]
-            continue
-        # 노선 인지 조회 (환승역에서 올바른 노선의 역코드)
-        codes = _find_codes_on_line(nm, _ln_nm)
-        if not codes:
-            continue
-        _uncached.append((nm, codes))
-
-    # 캐시 안 된 역의 4개 KRIC endpoint를 모두 병렬 호출
-    if _uncached:
-        from concurrent.futures import ThreadPoolExecutor as _TPE
-        _kric_fns = {
-            "movement": get_station_movement,
-            "elevator": get_elevator_movement,
-            "transfer": get_transfer_movement,
-            "lift": get_wheelchair_lift,
-        }
-        _futures = {}
-        with _TPE(max_workers=min(len(_uncached) * 4, 16)) as _ex:
-            for nm, codes in _uncached:
-                rail_op, ln, stin, _full = codes
-                for field, fn in _kric_fns.items():
-                    _futures[_ex.submit(fn, rail_op, ln, stin)] = (nm, field)
-            _collected = {}
-            for fut, (nm, field) in _futures.items():
-                try:
-                    _collected.setdefault(nm, {})[field] = fut.result()
-                except Exception:
-                    _collected.setdefault(nm, {})[field] = []
-        for nm, codes in _uncached:
-            rail_op, ln, stin, full_nm = codes
-            info = {
-                "codes": (rail_op, ln, stin),
-                "full_name": full_nm,
-                "movement": _collected.get(nm, {}).get("movement", []),
-                "elevator": _collected.get(nm, {}).get("elevator", []),
-                "transfer": _collected.get(nm, {}).get("transfer", []),
-                "lift": _collected.get(nm, {}).get("lift", []),
-            }
-            station_data[nm] = info
-            st.session_state[f"kric_{nm}_{_station_lines.get(nm, '')}"] = info
-
     if station_data:
         names = list(station_data.keys())
         tabs = st.tabs([f"🚇 {n}" for n in names])

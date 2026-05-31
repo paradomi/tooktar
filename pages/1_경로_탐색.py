@@ -307,6 +307,53 @@ if current_mode == "wheel":
         st.session_state[score_ck] = score
         return score
 
+    # 기존에 _route_lf_score step 2에서 순차로 돌던 저상 위치 검증(GBIS 호출)을
+    # 점수 계산 루프 전에 병렬로 미리 처리한다. 동일한 lf_ck 캐시 키에 결과를 채워
+    # 이후 _route_lf_score는 캐시만 읽도록(네트워크 호출 0) 만든다.
+    _lf_jobs = []
+    _seen_lf_ck = set()
+    for _r in routes:
+        for s in _r.get("steps", []):
+            if s.get("type") != "bus":
+                continue
+            bus_no = s.get("bus_no", "")
+            if not bus_no:
+                continue
+            # step 1: 캐시된 도착정보로 저상 여부 판단 (네트워크 호출 없음)
+            arrivals = st.session_state.get(_stop_key(s), [])
+            matched = [a for a in (arrivals or []) if a.get("route_name") == bus_no]
+            step1_ok = False
+            if matched:
+                for p in matched[0].get("predictions", []):
+                    m = p.get("minutes")
+                    if p.get("low_floor") and m is not None and m <= LF_WINDOW_MIN:
+                        step1_ok = True
+                        break
+            if step1_ok:
+                continue
+            lf_ck = f"lf_loc_v3_{s.get('start_id') or 'no'}_{bus_no}"
+            if lf_ck in st.session_state:
+                continue
+            if lf_ck in _seen_lf_ck:
+                continue
+            _seen_lf_ck.add(lf_ck)
+            _lf_jobs.append((lf_ck, s.get("start_id"), bus_no))
+
+    if _lf_jobs:
+        def _check_lf(job):
+            _ck, sid, bno = job
+            if sid:
+                return _wheel_has_lf(sid, bno, max_stops_ahead=15)
+            from services.bus_arrival import has_low_floor_on_route as _route_check
+            return _route_check(bno)
+
+        _workers = min(max(len(_lf_jobs), 1), 8)
+        with st.spinner("♿ 저상버스 운행 확인 중..."):
+            with ThreadPoolExecutor(max_workers=_workers) as ex:
+                _lf_results = list(ex.map(_check_lf, _lf_jobs))
+        for (ck, _sid, _bno), val in zip(_lf_jobs, _lf_results):
+            st.session_state[ck] = val
+
     scored = [(r, _route_lf_score(r)) for r in routes]
 
     def _lf_tier(s):

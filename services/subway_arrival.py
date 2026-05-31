@@ -5,8 +5,22 @@ import functools
 import datetime
 import requests
 import pandas as pd
+from zoneinfo import ZoneInfo
 
 KRIC_TIMETABLE_URL = "https://openapi.kric.go.kr/openapi/convenientInfo/stationTimetable"
+
+# 한국 표준시 (Streamlit Cloud 등 UTC 서버에서도 KST 기준으로 시각 계산)
+_KST = ZoneInfo("Asia/Seoul")
+
+
+def _now_kst():
+    """tz-naive 한국시간. 기존 naive datetime 비교 로직과 호환되도록 tzinfo 제거."""
+    return datetime.datetime.now(_KST).replace(tzinfo=None)
+
+# 다음 열차가 이 분(分)보다 멀면 데이터 신뢰성 검증 대상으로 본다
+NEAREST_SUSPICIOUS_MIN = 45
+# 막차까지 이만큼 운행이 남아있으면 정상 운행 시간대로 본다
+SERVICE_REMAINING_MIN = 90
 
 
 def _get_api_key():
@@ -19,7 +33,7 @@ def _get_day_code(ref_dt=None):
     새벽 3시 이전이면 전날 영업일(weekday-1)로 보정.
     """
     if ref_dt is None:
-        ref_dt = datetime.datetime.now()
+        ref_dt = _now_kst()
     biz_date = ref_dt
     if ref_dt.hour < 3:
         biz_date = ref_dt - datetime.timedelta(days=1)
@@ -125,7 +139,7 @@ def get_next_trains(rail_op_cd, ln_cd, stin_cd, limit=3, window_min=120, to_stin
     if not api_key:
         return _empty
 
-    now = datetime.datetime.now()
+    now = _now_kst()
     day_cd = _get_day_code(now)
 
     # 영업일 기준 자정을 base_date로 사용
@@ -135,33 +149,51 @@ def get_next_trains(rail_op_cd, ln_cd, stin_cd, limit=3, window_min=120, to_stin
         biz_day = now
     base_date = biz_day.replace(hour=0, minute=0, second=0, microsecond=0)
 
+    # 하루치 단일역 시각표는 보통 100+행. 빈/짧은 응답은 잘린 응답이므로
+    # 최대 2회까지 재시도해 부분 응답을 걸러낸다.
+    MIN_ITEMS = 30
+
     try:
-        r = requests.get(
-            KRIC_TIMETABLE_URL,
-            params={
-                "serviceKey": api_key,
-                "format": "json",
-                "dayCd": day_cd,
-                "lnCd": ln_cd,
-                "railOprIsttCd": rail_op_cd,
-                "stinCd": stin_cd,
-            },
-            timeout=10,
-        )
-        if r.status_code != 200:
-            return _empty
+        items = None
+        for _attempt in range(2):
+            try:
+                r = requests.get(
+                    KRIC_TIMETABLE_URL,
+                    params={
+                        "serviceKey": api_key,
+                        "format": "json",
+                        "dayCd": day_cd,
+                        "lnCd": ln_cd,
+                        "railOprIsttCd": rail_op_cd,
+                        "stinCd": stin_cd,
+                    },
+                    timeout=10,
+                )
+            except Exception:
+                # 일시적 요청 오류: 다음 시도로 넘어감
+                continue
 
-        try:
-            data = r.json()
-        except Exception:
-            return _empty
+            if r.status_code != 200:
+                continue
 
-        header = data.get("header", {})
-        if header.get("resultCode") != "00":
-            return _empty
+            try:
+                data = r.json()
+            except Exception:
+                continue
 
-        items = data.get("body", [])
-        if not items or not isinstance(items, list):
+            header = data.get("header", {})
+            if header.get("resultCode") != "00":
+                continue
+
+            body = data.get("body", [])
+            if not body or not isinstance(body, list) or len(body) < MIN_ITEMS:
+                # 빈/부분 응답으로 판단 → 재시도
+                continue
+
+            items = body
+            break
+
+        if items is None:
             return _empty
 
         # 방향 필터링용 노선 인덱스 (to_stin_cd가 있고 승차역 != 하차역일 때만 사용)
@@ -239,6 +271,17 @@ def get_next_trains(rail_op_cd, ln_cd, stin_cd, limit=3, window_min=120, to_stin
             status = "after_last"
         else:
             status = "no_data"
+
+        # 타당성 검증: 막차까지 90분 넘게 남았는데 가장 가까운 열차가 45분 이상 뒤면
+        # 지하철로는 물리적으로 불가능한 간격 → 데이터 불신, 잘못된 안내 방지
+        if (
+            trains
+            and trains[0]["minutes_until"] > NEAREST_SUSPICIOUS_MIN
+            and direction_filtered
+        ):
+            remaining_min = (latest["dt"] - now).total_seconds() / 60
+            if remaining_min > SERVICE_REMAINING_MIN:
+                return _empty
 
         return {"trains": trains, "last_dpt": last_dpt, "status": status}
 

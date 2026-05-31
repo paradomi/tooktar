@@ -127,40 +127,40 @@ def generate_briefing(route, mode, origin_name, dest_name, diagram_insight=None)
     summary += f", 요금 **{payment:,}원**입니다."
     lines.append(summary)
 
-    # ─── 2) 단계별 핵심 안내 ───
+    # ─── 2) 단계별 핵심 안내 (실제 이동 순서대로) ───
     subway_steps = [s for s in steps if s.get("type") == "subway"]
     bus_steps = [s for s in steps if s.get("type") == "bus"]
 
-    # 지하철 안내
-    for s in subway_steps:
-        line_name = s.get("line_name", "")
-        start = s.get("start_name", "")
-        end = s.get("end_name", "")
-        st_cnt = _safe_int(s.get("station_count"))
-        sec_time = _safe_int(s.get("section_time"))
-        sentence = f"🚇 **{start}**역에서 **{line_name}**을 타고 **{end}**까지"
-        if st_cnt > 0:
-            sentence += f" **{st_cnt}개 역** 이동"
-        if sec_time > 0:
-            sentence += f" ({sec_time}분)"
-        sentence += "합니다."
-        lines.append(sentence)
-
-    # 버스 안내
-    for s in bus_steps:
-        bus_no = s.get("bus_no", "")
-        start = s.get("start_name", "")
-        end = s.get("end_name", "")
-        st_cnt = _safe_int(s.get("station_count"))
-        sec_time = _safe_int(s.get("section_time"))
-        sentence = f"🚌 **{start}** 정류장에서 **{bus_no}번 버스**를 타고"
-        if st_cnt > 0:
-            sentence += f" **{st_cnt}정거장** 후"
-        sentence += f" **{end}**에서 하차"
-        if sec_time > 0:
-            sentence += f" (약 {sec_time}분)"
-        sentence += "합니다."
-        lines.append(sentence)
+    # steps를 순서대로 순회하며 지하철/버스를 그 자리에서 안내
+    for s in steps:
+        stype = s.get("type")
+        if stype == "subway":
+            line_name = s.get("line_name", "")
+            start = s.get("start_name", "")
+            end = s.get("end_name", "")
+            st_cnt = _safe_int(s.get("station_count"))
+            sec_time = _safe_int(s.get("section_time"))
+            sentence = f"🚇 **{start}**역에서 **{line_name}**을 타고 **{end}**까지"
+            if st_cnt > 0:
+                sentence += f" **{st_cnt}개 역** 이동"
+            if sec_time > 0:
+                sentence += f" ({sec_time}분)"
+            sentence += "합니다."
+            lines.append(sentence)
+        elif stype == "bus":
+            bus_no = s.get("bus_no", "")
+            start = s.get("start_name", "")
+            end = s.get("end_name", "")
+            st_cnt = _safe_int(s.get("station_count"))
+            sec_time = _safe_int(s.get("section_time"))
+            sentence = f"🚌 **{start}** 정류장에서 **{bus_no}번 버스**를 타고"
+            if st_cnt > 0:
+                sentence += f" **{st_cnt}정거장** 후"
+            sentence += f" **{end}**에서 하차"
+            if sec_time > 0:
+                sentence += f" (약 {sec_time}분)"
+            sentence += "합니다."
+            lines.append(sentence)
 
     # ─── 3) 도보 안내 (길이에 따른 톤 조정) ───
     if walk >= 800:
