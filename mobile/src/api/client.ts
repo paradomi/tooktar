@@ -397,7 +397,8 @@ export async function subwayFacilities(args: {
 }): Promise<Facilities> {
   const qs = new URLSearchParams(args as Record<string, string>);
   try {
-    return await getJson<Facilities>(`/subway/facilities?${qs.toString()}`);
+    // KRIC 공공 API 가 느림(배포 서버 기준 7초+) → 타임아웃 여유 있게
+    return await getJson<Facilities>(`/subway/facilities?${qs.toString()}`, 30000);
   } catch {
     return { movement: [], elevator: [], transfer: [], lift: [] };
   }
