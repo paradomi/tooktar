@@ -1,0 +1,28 @@
+# Render 배포 설정 — 백엔드(FastAPI)
+# 대시보드에서 Blueprint 로 이 파일을 읽어 서비스 생성.
+# 환경변수(API 키)는 Render 대시보드 > Environment 에서 직접 입력 (절대 커밋 금지).
+services:
+  - type: web
+    name: tooktah-api
+    runtime: python
+    plan: free
+    buildCommand: pip install -r backend/requirements.txt
+    startCommand: uvicorn backend.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: GBIS_API_KEY
+        sync: false
+      - key: ODSAY_API_KEY
+        sync: false
+      - key: KAKAO_REST_API_KEY
+        sync: false
+      - key: KAKAO_SDK_DOMAIN # 카카오맵 JS 키
+        sync: false
+      - key: TMAP
+        sync: false
+      - key: KRIC
+        sync: false
+      - key: Gemini
+        sync: false

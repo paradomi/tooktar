@@ -1,0 +1,12 @@
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="툭타 원형 로고">
+  <circle cx="256" cy="256" r="240" fill="#002F6C"/>
+  <circle cx="256" cy="256" r="240" fill="none" stroke="#FFD23F" stroke-width="10"/>
+  <g fill="#FFFFFF">
+    <rect x="170" y="162" width="42" height="200" rx="18"/>
+    <rect x="170" y="244" width="172" height="40" rx="18"/>
+    <rect x="170" y="322" width="172" height="40" rx="18"/>
+  </g>
+  <rect x="170" y="162" width="172" height="40" rx="18" fill="#FFD23F"/>
+  <circle cx="360" cy="182" r="26" fill="#FFD23F"/>
+  <circle cx="360" cy="182" r="10" fill="#002F6C"/>
+</svg>

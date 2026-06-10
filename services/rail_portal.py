@@ -106,6 +106,117 @@ def find_station_codes_on_line(station_name: str, line_name: str):
     )
 
 
+def _stin_cd_of(df, line_cd, station_name):
+    """노선코드 + 역명으로 STIN_CD 반환. 부분매칭 허용."""
+    if df is None or df.empty:
+        return None
+    sub = df[df["LN_CD"] == line_cd]
+    nm = (station_name or "").rstrip("역").strip()
+    if not nm:
+        return None
+    exact = sub[sub["STIN_NM"] == nm]
+    if not exact.empty:
+        return exact.iloc[0]["STIN_CD"]
+    partial = sub[sub["STIN_NM"].str.startswith(nm, na=False)]
+    if not partial.empty:
+        return partial.iloc[0]["STIN_CD"]
+    return None
+
+
+def _stin_num(stin_cd):
+    import re
+    if not stin_cd:
+        return None
+    m = re.search(r"(\d+)", str(stin_cd))
+    return int(m.group(1)) if m else None
+
+
+def _line_terminals(df, line_cd):
+    if df is None or df.empty:
+        return None, None
+    sub = df[df["LN_CD"] == line_cd]
+    if sub.empty:
+        return None, None
+    pairs = []
+    for _, row in sub.iterrows():
+        n = _stin_num(row["STIN_CD"])
+        if n is not None:
+            pairs.append((n, str(row["STIN_NM"])))
+    if not pairs:
+        return None, None
+    pairs.sort(key=lambda p: p[0])
+    return pairs[0][1], pairs[-1][1]
+
+
+def _line_cd_of_station(df, station_name):
+    if df is None or df.empty:
+        return None
+    nm = (station_name or "").rstrip("역").strip()
+    if not nm:
+        return None
+    rows = df[df["STIN_NM"] == nm]
+    if rows.empty:
+        rows = df[df["STIN_NM"].str.startswith(nm, na=False)]
+    if rows.empty:
+        return None
+    return str(rows.iloc[0]["LN_CD"])
+
+
+def _adjacent_station(df, line_cd, start_num, direction):
+    if df is None or df.empty:
+        return None
+    sub = df[df["LN_CD"] == line_cd]
+    if sub.empty:
+        return None
+    pairs = []
+    for _, row in sub.iterrows():
+        n = _stin_num(row["STIN_CD"])
+        if n is not None:
+            pairs.append((n, str(row["STIN_NM"])))
+    if not pairs:
+        return None
+    pairs.sort(key=lambda p: p[0])
+    nums = [p[0] for p in pairs]
+    if start_num not in nums:
+        return None
+    idx = nums.index(start_num)
+    nxt = idx + direction
+    if 0 <= nxt < len(pairs):
+        return pairs[nxt][1]
+    return None
+
+
+def direction_label(start_name, end_name, line_name=None):
+    """ODsay subway step의 (start_name, end_name)으로 '(종점, 인접역) 방면' 라벨 생성.
+    실패 시 '{end_name} 방면' fallback. line_name 주면 환승역 노선 정확히 매칭."""
+    fallback = f"{end_name} 방면"
+    if not start_name or not end_name:
+        return fallback
+    df = _load_station_codes()
+    ln_cd = None
+    if line_name:
+        c = find_station_codes_on_line(start_name, line_name)
+        if c:
+            ln_cd = c[1]
+    if not ln_cd:
+        ln_cd = _line_cd_of_station(df, start_name)
+    if not ln_cd:
+        return fallback
+    start_num = _stin_num(_stin_cd_of(df, ln_cd, start_name))
+    end_num = _stin_num(_stin_cd_of(df, ln_cd, end_name))
+    if start_num is None or end_num is None or start_num == end_num:
+        return fallback
+    direction = -1 if end_num < start_num else 1
+    t_low, t_high = _line_terminals(df, ln_cd)
+    terminal = t_low if direction == -1 else t_high
+    adj = _adjacent_station(df, ln_cd, start_num, direction)
+    if terminal and adj and terminal != adj:
+        return f"({terminal}, {adj}) 방면"
+    if terminal:
+        return f"{terminal} 방면"
+    return fallback
+
+
 def _call_kric(service_id: str, op_id: str, **params):
     """KRIC API 공통 호출 헬퍼. 실패 시 빈 리스트."""
     api_key = os.getenv("KRIC", "")

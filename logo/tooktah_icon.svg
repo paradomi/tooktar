@@ -1,0 +1,20 @@
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="툭타 로고">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0A4A8F"/>
+      <stop offset="1" stop-color="#002F6C"/>
+    </linearGradient>
+  </defs>
+  <rect x="16" y="16" width="480" height="480" rx="116" fill="url(#bg)"/>
+
+  <!-- ㅌ 모노그램: 세로 기둥 + 균등 가로 3획 -->
+  <g fill="#FFFFFF">
+    <rect x="150" y="150" width="46" height="218" rx="20"/>   <!-- 세로 -->
+    <rect x="150" y="240" width="196" height="44" rx="20"/>   <!-- 중간 -->
+    <rect x="150" y="324" width="196" height="44" rx="20"/>   <!-- 하단 -->
+  </g>
+  <!-- 상단 가로(옐로) + 목적지 핀 = '툭, 도착' 모티프 -->
+  <rect x="150" y="150" width="196" height="44" rx="20" fill="#FFD23F"/>
+  <circle cx="368" cy="172" r="30" fill="#FFD23F"/>
+  <circle cx="368" cy="172" r="12" fill="#002F6C"/>
+</svg>

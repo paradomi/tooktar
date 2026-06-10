@@ -5,6 +5,7 @@
 
 import os
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 
 from dotenv import load_dotenv
@@ -17,10 +18,26 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 load_dotenv()
 
-from services.geocode import address_to_coord
+from services.geocode import address_to_coord, coord_to_address
 from services.odsay_api import search_pub_trans_path, parse_routes, load_lane
-from services.tmap_api import pedestrian_route
-from services.kakao_local import find_subway_place_id, get_subway_kakao_url
+from services.tmap_api import pedestrian_route, pedestrian_route_detail
+from services.kakao_local import find_subway_place_id, get_subway_kakao_url, search_places
+from services.bus_arrival import (
+    get_arrivals,
+    has_low_floor_arriving,
+    has_low_floor_on_route,
+)
+from services.subway_arrival import get_next_trains
+from services.rail_portal import (
+    find_station_codes_on_line,
+    get_station_movement,
+    get_elevator_movement,
+    get_transfer_movement,
+    get_wheelchair_lift,
+    direction_label,
+)
+from services.ai_briefing import generate_briefing, analyze_subway_diagram
+from services.subway_exits import infer_subway_exits
 
 
 app = FastAPI(title="툭타 API", version="0.1.0")
@@ -54,10 +71,38 @@ class WalkReq(BaseModel):
     search_option: int = 0  # 0=기본, 4=계단 제외
 
 
+class BriefingReq(BaseModel):
+    route: dict
+    mode: str = "fast"
+    origin_name: str = "출발"
+    dest_name: str = "도착"
+    diagram_insight: Optional[str] = None
+
+
+class ScoreReq(BaseModel):
+    routes: list
+
+
+class ExitsReq(BaseModel):
+    steps: list
+    origin: Optional[dict] = None
+    dest: Optional[dict] = None
+    wheel: bool = False  # 휠체어 모드: 엘리베이터 접근가능 출구로 제한
+
+
 # ─── 엔드포인트 ───
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@app.get("/config")
+def config():
+    """클라이언트(앱)용 공개 설정 — 카카오맵 JS 키.
+    JS 키는 도메인/플랫폼 등록 기반이라 노출돼도 REST 키만큼 민감하지 않음."""
+    return {
+        "kakao_js_key": os.getenv("KAKAO_JS_KEY") or os.getenv("KAKAO_SDK_DOMAIN", ""),
+    }
 
 
 @app.get("/geocode")
@@ -67,6 +112,36 @@ def geocode(address: str = Query(..., description="주소 또는 장소명")):
     if not coord:
         raise HTTPException(status_code=404, detail="주소를 찾을 수 없습니다")
     return coord
+
+
+@app.get("/reverse-geocode")
+def reverse_geocode(
+    lng: float = Query(..., description="경도"),
+    lat: float = Query(..., description="위도"),
+):
+    """좌표를 주소/지명으로 변환 (카카오 REST API) — GPS 현재위치 표시용"""
+    addr = coord_to_address(lng, lat)
+    if not addr:
+        raise HTTPException(status_code=404, detail="주소를 찾을 수 없습니다")
+    return addr
+
+
+@app.get("/places")
+def places(
+    query: str = Query(..., description="검색어"),
+    size: int = Query(8, description="결과 개수"),
+):
+    """카카오 키워드 검색 — 자동완성용. 좌표 포함 결과 리스트."""
+    docs = search_places(query, size=size)
+    results = []
+    for d in docs:
+        results.append({
+            "place_name": d.get("place_name", ""),
+            "address": d.get("road_address_name") or d.get("address_name", ""),
+            "lng": float(d["x"]) if d.get("x") else None,
+            "lat": float(d["y"]) if d.get("y") else None,
+        })
+    return {"places": results, "count": len(results)}
 
 
 @app.post("/routes/search")
@@ -94,16 +169,16 @@ def get_lane(map_obj: str = Query(..., description="ODsay mapObj 키")):
 
 @app.post("/walk/pedestrian")
 def walk_pedestrian(req: WalkReq):
-    """Tmap 보행자 경로 — 도보 polyline 좌표"""
-    coords = pedestrian_route(
+    """Tmap 보행자 경로 — 도보 polyline 좌표 + 턴바이턴 안내(guides)"""
+    coords, guides = pedestrian_route_detail(
         req.start_x, req.start_y, req.end_x, req.end_y,
         start_name=req.start_name, end_name=req.end_name,
         search_option=req.search_option,
     )
     if not coords:
         # 실패 시 빈 배열 반환 (프론트에서 직선 fallback 처리)
-        return {"coords": [], "fallback": True}
-    return {"coords": coords, "count": len(coords), "fallback": False}
+        return {"coords": [], "guides": [], "fallback": True}
+    return {"coords": coords, "guides": guides, "count": len(coords), "fallback": False}
 
 
 @app.get("/subway/place-id")
@@ -122,3 +197,224 @@ def subway_url(name: str = Query(..., description="지하철역 이름")):
     if not url:
         raise HTTPException(status_code=404, detail="역을 찾을 수 없습니다")
     return {"name": name, "url": url}
+
+
+@app.get("/bus/arrivals")
+def bus_arrivals(
+    station_id: Optional[str] = Query(None, description="GBIS stationId (있으면 우선)"),
+    lng: Optional[float] = Query(None, description="정류장 경도"),
+    lat: Optional[float] = Query(None, description="정류장 위도"),
+    station_name: Optional[str] = Query(None, description="정류장 이름"),
+):
+    """버스 도착정보 (GBIS 우선 → TAGO fallback)"""
+    arrivals = get_arrivals(
+        station_id=station_id, lng=lng, lat=lat, station_name=station_name
+    )
+    return {"arrivals": arrivals, "count": len(arrivals)}
+
+
+@app.get("/bus/low-floor")
+def bus_low_floor(
+    bus_no: str = Query(..., description="노선번호"),
+    station_id: Optional[str] = Query(None, description="GBIS stationId"),
+    max_stops_ahead: int = Query(30, description="정류장 이내 저상 차량 검색 범위"),
+):
+    """저상버스 운행/도착 여부 판별"""
+    if station_id:
+        is_low = has_low_floor_arriving(station_id, bus_no, max_stops_ahead=max_stops_ahead)
+    else:
+        is_low = has_low_floor_on_route(bus_no)
+    return {"bus_no": bus_no, "low_floor": bool(is_low)}
+
+
+@app.get("/subway/station-codes")
+def subway_station_codes(
+    station_name: str = Query(..., description="역명"),
+    line_name: str = Query("", description="노선명 (환승역 구분용)"),
+):
+    """역명(+노선) → KRIC 역코드"""
+    codes = find_station_codes_on_line(station_name, line_name)
+    if not codes:
+        raise HTTPException(status_code=404, detail="역코드를 찾을 수 없습니다")
+    rail_op, ln_cd, stin_cd, full_name = codes
+    return {
+        "rail_op_cd": rail_op,
+        "ln_cd": ln_cd,
+        "stin_cd": stin_cd,
+        "full_name": full_name,
+    }
+
+
+@app.get("/subway/next-trains")
+def subway_next_trains(
+    rail_op_cd: str = Query(..., description="운영기관코드"),
+    ln_cd: str = Query(..., description="노선코드"),
+    stin_cd: str = Query(..., description="역코드"),
+    limit: int = Query(3, description="최대 열차 수"),
+    to_stin_cd: Optional[str] = Query(None, description="하차역 코드 (방향 필터)"),
+):
+    """지하철 다음 열차 (KRIC 시각표, KST 기준)"""
+    return get_next_trains(
+        rail_op_cd, ln_cd, stin_cd, limit=limit, to_stin_cd=to_stin_cd
+    )
+
+
+@app.get("/subway/facilities")
+def subway_facilities(
+    rail_op_cd: str = Query(..., description="운영기관코드"),
+    ln_cd: str = Query(..., description="노선코드"),
+    stin_cd: str = Query(..., description="역코드"),
+):
+    """KRIC 교통약자 시설 (이동경로/엘리베이터/환승/휠체어리프트)"""
+    return {
+        "movement": get_station_movement(rail_op_cd, ln_cd, stin_cd),
+        "elevator": get_elevator_movement(rail_op_cd, ln_cd, stin_cd),
+        "transfer": get_transfer_movement(rail_op_cd, ln_cd, stin_cd),
+        "lift": get_wheelchair_lift(rail_op_cd, ln_cd, stin_cd),
+    }
+
+
+@app.get("/subway/direction")
+def subway_direction(
+    start_name: str = Query(..., description="승차역명"),
+    end_name: str = Query(..., description="하차역명"),
+    line_name: str = Query("", description="노선명"),
+):
+    """지하철 방면 라벨 — '(종점, 인접역) 방면'"""
+    label = direction_label(start_name, end_name, line_name or None)
+    return {"label": label}
+
+
+@app.post("/subway/exits")
+def subway_exits(req: ExitsReq):
+    """지하철 진입/하차 출구 추론. 반환: {역명: {"in": "7번", "out": "10번"}}
+    wheel=True면 각 역의 엘리베이터 접근가능 출구로 추천을 제한한다."""
+    import re as _re
+    accessible = None
+    if req.wheel:
+        # 경로의 지하철 역마다 KRIC 이동경로에서 엘리베이터 접근가능 출구 번호 집합 추출
+        accessible = {}
+        seen = set()
+        for s in req.steps:
+            if s.get("type") != "subway":
+                continue
+            for nm in (s.get("start_name"), s.get("end_name")):
+                if not nm or nm in seen:
+                    continue
+                seen.add(nm)
+                codes = find_station_codes_on_line(nm, s.get("line_name", "") or "")
+                if not codes:
+                    continue
+                rail_op, ln_cd, stin_cd, _full = codes
+                mv = get_station_movement(rail_op, ln_cd, stin_cd)
+                nums = set()
+                for it in mv or []:
+                    for n in _re.findall(r"(\d+)번", it.get("stMovePath", "") or ""):
+                        nums.add(n)
+                if nums:
+                    accessible[nm] = nums
+        accessible = accessible or None
+    exits = infer_subway_exits(req.steps, req.origin, req.dest, accessible_map=accessible)
+    return {"exits": exits}
+
+
+@app.post("/briefing")
+def briefing(req: BriefingReq):
+    """AI 경로 브리핑 (템플릿 + 선택적 도면 인사이트)"""
+    text = generate_briefing(
+        req.route,
+        req.mode,
+        req.origin_name,
+        req.dest_name,
+        diagram_insight=req.diagram_insight,
+    )
+    return {"briefing": text}
+
+
+@app.get("/subway/diagram-analysis")
+def diagram_analysis(
+    img_url: str = Query(..., description="KRIC 역내 도면 imgPath"),
+    station_name: str = Query("", description="역명"),
+    direction: str = Query("", description="가야 할 방면"),
+):
+    """KRIC 도면 이미지를 Gemini Vision으로 분석해 휠체어 이용자용 안내 생성."""
+    insight = analyze_subway_diagram(img_url, station_name, direction)
+    return {"insight": insight or ""}
+
+
+@app.post("/routes/score-low-floor")
+def score_low_floor(req: ScoreReq):
+    """경로별 저상버스 친화도 점수 (저상 조회를 중복 제거 + 병렬 처리).
+    반환: [{"id", "score", "tier"}]
+      score: 1.0=전 구간 저상확보, 0~1=부분, 0=저상없음, null=미확인, "subway_only"=버스없음
+      tier:  0=확정/지하철, 1=부분, 2=미확인, 3=저상없음 (작을수록 우선)
+    """
+    # 1) 모든 경로의 버스 step에서 필요한 (station_id, bus_no) 검사를 중복 제거
+    jobs = {}  # (station_id_or_empty, bus_no) -> (station_id, bus_no)
+    for route in req.routes:
+        for s in (route.get("steps", []) or []):
+            if s.get("type") != "bus":
+                continue
+            bus_no = s.get("bus_no", "")
+            if not bus_no:
+                continue
+            station_id = s.get("start_id")
+            key = (station_id or "", bus_no)
+            if key not in jobs:
+                jobs[key] = (station_id, bus_no)
+
+    # 2) 병렬로 저상 운행 여부 조회
+    def _check(item):
+        station_id, bus_no = item
+        try:
+            if station_id:
+                return has_low_floor_arriving(station_id, bus_no, max_stops_ahead=15, fast=True)
+            return has_low_floor_on_route(bus_no)
+        except Exception:
+            return False
+
+    cache = {}  # key -> bool
+    if jobs:
+        keys = list(jobs.keys())
+        workers = min(len(keys), 16) or 1
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            vals = list(ex.map(lambda k: _check(jobs[k]), keys))
+        cache = dict(zip(keys, vals))
+
+    # 3) 캐시를 읽어 경로별 점수 계산 (네트워크 호출 없음)
+    results = []
+    for route in req.routes:
+        rid = route.get("id")
+        bus_steps = [s for s in (route.get("steps", []) or []) if s.get("type") == "bus"]
+        if not bus_steps:
+            results.append({"id": rid, "score": "subway_only", "tier": 0})
+            continue
+
+        ok = 0
+        data_steps = 0
+        for s in bus_steps:
+            bus_no = s.get("bus_no", "")
+            if not bus_no:
+                continue
+            key = (s.get("start_id") or "", bus_no)
+            step_ok = bool(cache.get(key, False))
+            data_steps += 1
+            if step_ok:
+                ok += 1
+
+        if data_steps == 0:
+            score = None
+        else:
+            score = ok / data_steps
+
+        if score == 1.0:
+            tier = 0
+        elif isinstance(score, (int, float)) and score > 0:
+            tier = 1
+        elif score is None:
+            tier = 2
+        else:
+            tier = 3
+        results.append({"id": rid, "score": score, "tier": tier})
+
+    return {"scores": results}

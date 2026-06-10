@@ -1,0 +1,18 @@
+<svg width="900" height="300" viewBox="0 0 900 300" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="툭타 워드마크">
+  <rect width="900" height="300" fill="none"/>
+  <!-- 아이콘(모노그램) -->
+  <g transform="translate(40,40)">
+    <rect x="0" y="0" width="220" height="220" rx="54" fill="#002F6C"/>
+    <g fill="#FFFFFF">
+      <rect x="58" y="58" width="22" height="100" rx="9"/>
+      <rect x="58" y="98" width="78" height="20" rx="9"/>
+      <rect x="58" y="140" width="96" height="20" rx="9"/>
+    </g>
+    <rect x="58" y="58" width="96" height="20" rx="9" fill="#FFD23F"/>
+    <circle cx="168" cy="68" r="14" fill="#FFD23F"/>
+    <circle cx="168" cy="68" r="5" fill="#002F6C"/>
+  </g>
+  <!-- 워드마크 텍스트 -->
+  <text x="300" y="150" font-family="'Gowun Batang','Nanum Myeongjo',serif" font-size="120" font-weight="700" fill="#002F6C">툭 타</text>
+  <text x="304" y="210" font-family="'Gowun Batang',serif" font-size="34" fill="#1F77B4">이동의 장벽을 툭, 넘다</text>
+</svg>

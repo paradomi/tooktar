@@ -46,6 +46,24 @@ def load_lane(map_obj: str):
     return None
 
 
+def _extract_pass_stops(sp: dict) -> list[dict]:
+    """ODsay subPath의 passStopList(경유 정류장) → [{name, lat, lng}] (탑승~하차 순서)"""
+    psl = sp.get("passStopList") or {}
+    out = []
+    for st in psl.get("stations", []) or []:
+        try:
+            lng = float(st.get("x"))
+            lat = float(st.get("y"))
+        except (TypeError, ValueError):
+            continue
+        out.append({
+            "name": st.get("stationName", ""),
+            "lat": lat,
+            "lng": lng,
+        })
+    return out
+
+
 def parse_path_to_steps(path_info: dict) -> list[dict]:
     """ODsay 경로 응답의 subPath를 UI용 step 리스트로 변환"""
     steps = []
@@ -103,6 +121,7 @@ def parse_path_to_steps(path_info: dict) -> list[dict]:
                 "end_y": sp.get("endY"),
                 "start_id": sp.get("startID"),
                 "end_id": sp.get("endID"),
+                "pass_stops": _extract_pass_stops(sp),
             })
         elif traffic_type == 1:
             lane = sp.get("lane", [{}])
@@ -124,6 +143,7 @@ def parse_path_to_steps(path_info: dict) -> list[dict]:
                 "start_y": sp.get("startY"),
                 "end_x": sp.get("endX"),
                 "end_y": sp.get("endY"),
+                "pass_stops": _extract_pass_stops(sp),
             })
     return steps
 

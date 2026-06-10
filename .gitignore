@@ -1,6 +1,9 @@
 # 가상환경
 venv/
 
+# Node 의존성 (logo/, poster/, presentation/, mobile/ 등)
+node_modules/
+
 # 환경변수 (API 키 등)
 .env
 

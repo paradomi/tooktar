@@ -237,7 +237,7 @@ def has_low_floor_on_route(bus_no, region_hint=None):
     return False
 
 
-def has_low_floor_arriving(station_id, route_name, max_stops_ahead=30):
+def has_low_floor_arriving(station_id, route_name, max_stops_ahead=30, fast=False):
     """특정 정류장에 곧 도착하는 저상버스가 노선에 있는지.
 
     1) GBIS 도착정보로 routeId + 우리 정류장 staOrder 알아냄
@@ -251,7 +251,7 @@ def has_low_floor_arriving(station_id, route_name, max_stops_ahead=30):
         r = requests.get(GBIS_URL, params={
             "serviceKey": _api_key(),
             "stationId": station_id,
-        }, timeout=6)
+        }, timeout=(4 if fast else 6))
         items = r.json().get("response", {}).get("msgBody", {}).get("busArrivalList", [])
         if isinstance(items, dict):
             items = [items]
@@ -261,6 +261,9 @@ def has_low_floor_arriving(station_id, route_name, max_stops_ahead=30):
     matched = next((it for it in (items or []) if str(it.get("routeName")) == route_name), None)
     if not matched:
         # 정류장 매칭 실패 (ODsay startID ≠ GBIS stationId인 경우)
+        if fast:
+            # 빠른 모드: 무거운 노선검색 폴백 생략
+            return False
         # → 노선번호로 직접 routeId 찾아 BusLocation에서 저상 운행 검증
         return has_low_floor_on_route(route_name)
 
@@ -269,6 +272,15 @@ def has_low_floor_arriving(station_id, route_name, max_stops_ahead=30):
         if str(matched.get(k) or "") == "1":
             return True
 
+    # 빠른 모드: 다음 버스가 40분 넘게 남았으면 무거운 위치조회 생략
+    if fast:
+        try:
+            _pt = int(matched.get("predictTime1"))
+            if _pt > 40:
+                return False
+        except (ValueError, TypeError):
+            pass  # 도착시간 모르면 그대로 검증 진행
+
     route_id = matched.get("routeId")
     try:
         sta_order = int(matched.get("staOrder"))
@@ -276,6 +288,8 @@ def has_low_floor_arriving(station_id, route_name, max_stops_ahead=30):
         sta_order = None
 
     if not route_id:
+        if fast:
+            return False
         return has_low_floor_on_route(route_name)
 
     # 노선 전체 차량 위치
