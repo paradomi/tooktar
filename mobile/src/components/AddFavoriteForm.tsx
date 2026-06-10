@@ -6,7 +6,10 @@ import { geocode, type Coord } from '../api/client';
 import PlaceSearchInput from './PlaceSearchInput';
 import type { FavoritePlace } from '../data/favorites';
 
-const ICONS = ['🏠', '🏢', '🏥', '🏫', '🛒', '👨‍👩‍👧', '⛪', '🏛️', '🏋️', '🍽️', '☕', '📚'];
+const ICONS = [
+  '🏠', '🏢', '🏥', '🏫', '🛒', '👨‍👩‍👧', '⛪', '🏛️', '🏋️', '🍽️', '☕', '📚',
+  '🚇', '🚌', '🚉', '🚏', '✈️', '🏦', '💊', '🏪', '🌳', '🎬', '💇', '🐾',
+];
 
 interface Props {
   onAdd: (place: FavoritePlace) => void;
