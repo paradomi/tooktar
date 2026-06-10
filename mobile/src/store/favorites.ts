@@ -45,10 +45,16 @@ export function useFavorites() {
     [favorites, persist]
   );
 
+  const updateFavorite = useCallback(
+    (index: number, place: FavoritePlace) =>
+      persist(favorites.map((p, i) => (i === index ? place : p))),
+    [favorites, persist]
+  );
+
   const reorderFavorites = useCallback(
     (next: FavoritePlace[]) => persist(next),
     [persist]
   );
 
-  return { favorites, loaded, addFavorite, removeFavorite, reorderFavorites };
+  return { favorites, loaded, addFavorite, removeFavorite, updateFavorite, reorderFavorites };
 }

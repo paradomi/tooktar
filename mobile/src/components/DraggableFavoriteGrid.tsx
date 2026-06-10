@@ -25,6 +25,7 @@ interface Props {
   items: FavoritePlace[];
   onReorder: (next: FavoritePlace[]) => void;
   onDelete: (index: number) => void;
+  onEdit: (index: number) => void;
 }
 
 /** index → 그리드 좌표 (행/열) */
@@ -41,7 +42,7 @@ function posToIndex(x: number, y: number, cellW: number, count: number) {
   return Math.max(0, Math.min(count - 1, row * COLS + col));
 }
 
-export default function DraggableFavoriteGrid({ items, onReorder, onDelete }: Props) {
+export default function DraggableFavoriteGrid({ items, onReorder, onDelete, onEdit }: Props) {
   const { width } = useWindowDimensions();
   // 좌우 패딩 18*2 가정 → ScrollView 안쪽 폭
   const containerW = width - 36;
@@ -62,6 +63,7 @@ export default function DraggableFavoriteGrid({ items, onReorder, onDelete }: Pr
           items={items}
           onReorder={onReorder}
           onDelete={() => onDelete(index)}
+          onEdit={() => onEdit(index)}
         />
       ))}
     </View>
@@ -76,9 +78,10 @@ interface CardProps {
   items: FavoritePlace[];
   onReorder: (next: FavoritePlace[]) => void;
   onDelete: () => void;
+  onEdit: () => void;
 }
 
-function DraggableCard({ item, index, count, cellW, items, onReorder, onDelete }: CardProps) {
+function DraggableCard({ item, index, count, cellW, items, onReorder, onDelete, onEdit }: CardProps) {
   const base = slotPos(index, cellW);
   const tx = useSharedValue(base.x);
   const ty = useSharedValue(base.y);
@@ -135,8 +138,13 @@ function DraggableCard({ item, index, count, cellW, items, onReorder, onDelete }
   return (
     <GestureDetector gesture={pan}>
       <Animated.View style={[styles.card, { width: cellW }, aStyle]}>
+        <View style={styles.editBtn}>
+          <Text style={styles.editText} onPress={onEdit} accessibilityLabel={`${item.label} 편집`}>
+            ✏️
+          </Text>
+        </View>
         <View style={styles.deleteBtn}>
-          <Text style={styles.deleteText} onPress={onDelete}>
+          <Text style={styles.deleteText} onPress={onDelete} accessibilityLabel={`${item.label} 삭제`}>
             ✕
           </Text>
         </View>
@@ -181,6 +189,21 @@ const styles = StyleSheet.create({
     zIndex: 2,
   },
   deleteText: { color: '#fff', fontSize: 16, fontWeight: '700', lineHeight: 20, paddingHorizontal: 6 },
+  editBtn: {
+    position: 'absolute',
+    top: 6,
+    right: 42,
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: colors.light,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 2,
+  },
+  editText: { fontSize: 14, lineHeight: 20, paddingHorizontal: 6 },
   dragHint: { position: 'absolute', top: 8, left: 10, color: colors.grayLight, fontSize: 16 },
   icon: { fontSize: 34, marginBottom: 8 },
   label: { fontSize: 20, fontWeight: '700', color: colors.navy },

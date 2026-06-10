@@ -40,9 +40,12 @@ export default function HomeScreen({ navigation }: Props) {
   const [originPicked, setOriginPicked] = useState<Coord | null>(null);
   const [destPicked, setDestPicked] = useState<Coord | null>(null);
   // 자주 가는 곳 (영구 저장) + 편집 모드
-  const { favorites, addFavorite, removeFavorite, reorderFavorites } = useFavorites();
+  const { favorites, addFavorite, removeFavorite, updateFavorite, reorderFavorites } =
+    useFavorites();
   const { recents, addRecent, removeRecent, clearRecents } = useRecents();
   const [editing, setEditing] = useState(false);
+  // 편집 중인 즐겨찾기 index (null 이면 새 장소 추가 모드)
+  const [editIndex, setEditIndex] = useState<number | null>(null);
   const [showTutorial, setShowTutorial] = useState(false);
 
   useEffect(() => {
@@ -177,7 +180,10 @@ export default function HomeScreen({ navigation }: Props) {
           <Text style={styles.sectionTitle}>⭐ 자주 가는 곳</Text>
           <Pressable
             style={styles.editBtn}
-            onPress={() => setEditing((v) => !v)}
+            onPress={() => {
+              setEditing((v) => !v);
+              setEditIndex(null);
+            }}
             accessibilityRole="button"
             accessibilityLabel={editing ? '편집 완료' : '자주 가는 곳 편집'}
           >
@@ -185,15 +191,34 @@ export default function HomeScreen({ navigation }: Props) {
           </Pressable>
         </View>
 
-        {editing && <AddFavoriteForm onAdd={addFavorite} />}
+        {editing && (
+          <AddFavoriteForm
+            initial={editIndex != null ? favorites[editIndex] : null}
+            onCancel={() => setEditIndex(null)}
+            onAdd={(place) => {
+              if (editIndex != null) {
+                updateFavorite(editIndex, place);
+                setEditIndex(null);
+              } else {
+                addFavorite(place);
+              }
+            }}
+          />
+        )}
 
         {editing ? (
           <>
-            <Text style={styles.dragGuide}>카드를 길게 눌러 끌면 순서를 바꿀 수 있어요</Text>
+            <Text style={styles.dragGuide}>
+              카드를 길게 눌러 끌면 순서를 바꾸고, ✏️로 수정할 수 있어요
+            </Text>
             <DraggableFavoriteGrid
               items={favorites}
               onReorder={reorderFavorites}
-              onDelete={removeFavorite}
+              onDelete={(i) => {
+                removeFavorite(i);
+                setEditIndex(null);
+              }}
+              onEdit={setEditIndex}
             />
           </>
         ) : (
