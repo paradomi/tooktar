@@ -159,15 +159,27 @@ export default function HomeScreen({ navigation }: Props) {
   }, [editIndex, tour]);
 
   useEffect(() => {
-    // 첫 시도 실패 시 콜드 스타트(서버 깨우기)로 보고 최대 75초 재시도
-    checkHealth().then((up) => {
-      if (up) {
-        setBackendUp(true);
-      } else {
-        setBackendUp(null); // '깨우는 중' 상태 유지
-        waitForBackend().then(setBackendUp);
+    // 콜드 스타트 대응: 연결될 때까지 감시하고, 성공하는 순간 배너 제거
+    let watching = true;
+    (async () => {
+      if (await checkHealth()) {
+        if (watching) setBackendUp(true);
+        return;
       }
-    });
+      if (watching) setBackendUp(null); // '깨우는 중' 배너
+      if (await waitForBackend()) {
+        if (watching) setBackendUp(true);
+        return;
+      }
+      if (watching) setBackendUp(false); // 한도 초과 → 에러 배너 (감시는 계속)
+      while (watching) {
+        await new Promise((r) => setTimeout(r, 5000));
+        if (await checkHealth(8000)) {
+          if (watching) setBackendUp(true);
+          return;
+        }
+      }
+    })();
     // 현재 위치 자동 감지 → 출발지 기본값
     (async () => {
       const c = await getCurrentCoord();
@@ -182,6 +194,9 @@ export default function HomeScreen({ navigation }: Props) {
       setGpsCoord(coord);
       setOrigin(`📍 ${coord.name}`);
     })();
+    return () => {
+      watching = false;
+    };
   }, []);
 
   // 즐겨찾기 → 도착지로 설정 후 경로 탐색
