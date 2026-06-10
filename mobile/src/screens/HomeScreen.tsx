@@ -22,7 +22,7 @@ import DraggableFavoriteGrid from '../components/DraggableFavoriteGrid';
 import PlaceSearchInput from '../components/PlaceSearchInput';
 import { useFavorites } from '../store/favorites';
 import { useRecents } from '../store/recents';
-import { checkHealth, geocode, coordToAddress, type Coord } from '../api/client';
+import { checkHealth, waitForBackend, geocode, coordToAddress, type Coord } from '../api/client';
 import { getCurrentCoord } from '../utils/location';
 import type { RootStackParamList } from '../navigation/types';
 
@@ -44,7 +44,15 @@ export default function HomeScreen({ navigation }: Props) {
   const [editing, setEditing] = useState(false);
 
   useEffect(() => {
-    checkHealth().then(setBackendUp);
+    // 첫 시도 실패 시 콜드 스타트(서버 깨우기)로 보고 최대 75초 재시도
+    checkHealth().then((up) => {
+      if (up) {
+        setBackendUp(true);
+      } else {
+        setBackendUp(null); // '깨우는 중' 상태 유지
+        waitForBackend().then(setBackendUp);
+      }
+    });
     // 현재 위치 자동 감지 → 출발지 기본값
     (async () => {
       const c = await getCurrentCoord();
@@ -139,10 +147,17 @@ export default function HomeScreen({ navigation }: Props) {
         </View>
 
         {/* 백엔드 상태 */}
+        {backendUp === null && (
+          <View style={styles.waking}>
+            <Text style={styles.wakingText}>
+              서버에 연결하는 중입니다… 첫 접속은 최대 1분 정도 걸릴 수 있어요.
+            </Text>
+          </View>
+        )}
         {backendUp === false && (
           <View style={styles.warn}>
             <Text style={styles.warnText}>
-              백엔드에 연결할 수 없습니다. uvicorn(:8000)을 실행했는지 확인하세요.
+              서버에 연결할 수 없습니다. 잠시 후 새로고침해 주세요.
             </Text>
           </View>
         )}
@@ -339,6 +354,13 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   warnText: { color: colors.danger, fontSize: sizes.fontSmall },
+  waking: {
+    backgroundColor: '#FFF8E1',
+    borderRadius: sizes.radiusSm,
+    padding: 12,
+    marginBottom: 12,
+  },
+  wakingText: { color: '#8A6D00', fontSize: sizes.fontSmall },
   sectionTitle: {
     fontSize: 22,
     fontWeight: '700',

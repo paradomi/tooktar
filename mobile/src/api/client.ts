@@ -59,10 +59,21 @@ async function postJson<T>(path: string, body: unknown, timeoutMs = 12000): Prom
   }
 }
 
+/** 백엔드가 깰 때까지 재시도 헬스 체크 — Render 무료 티어 콜드 스타트(30~50초) 대응.
+ *  깨어나면 즉시 true. maxMs 동안 못 깨우면 false. */
+export async function waitForBackend(maxMs = 75000): Promise<boolean> {
+  const deadline = Date.now() + maxMs;
+  while (Date.now() < deadline) {
+    if (await checkHealth(10000)) return true;
+    await new Promise((r) => setTimeout(r, 2500));
+  }
+  return false;
+}
+
 /** 백엔드 헬스 체크 */
-export async function checkHealth(): Promise<boolean> {
+export async function checkHealth(timeoutMs = 3000): Promise<boolean> {
   try {
-    const r = await getJson<{ status: string }>('/health', 3000);
+    const r = await getJson<{ status: string }>('/health', timeoutMs);
     return r.status === 'ok';
   } catch {
     return false;
