@@ -8,17 +8,13 @@ export interface FavoritePlace {
   lat: number;
 }
 
+// 기본값은 모든 방문자에게 동일하게 보이므로 개인 주소 금지 — 공공장소 예시만.
+// 사용자가 편집하면 그때부터 본인 기기(localStorage/AsyncStorage)에만 저장됨.
 export const FAVORITE_PLACES: FavoritePlace[] = [
-  { icon: '🏠', label: '집', address: '우남1차아파트', lng: 127.03362843525207, lat: 37.247332166005776 },
+  { icon: '🚉', label: '수원역', address: '경기 수원시 팔달구 매산로1가', lng: 127.000094700292, lat: 37.2657903079673 },
   { icon: '🏥', label: '병원', address: '아주대학교병원', lng: 127.04751881022693, lat: 37.27943874786612 },
   { icon: '🛒', label: '시장', address: '못골종합시장', lng: 127.02126744710107, lat: 37.27546918387394 },
-  { icon: '👨‍👩‍👧', label: '자녀 집', address: '성남시청', lng: 127.12628813511819, lat: 37.41993055742254 },
-];
-
-export const RECENT_SEARCHES = [
-  { name: '수원시청', address: '경기도 수원시 팔달구 효원로 241' },
-  { name: '아주대병원', address: '경기도 수원시 영통구 월드컵로 164' },
-  { name: '수원역', address: '경기도 수원시 팔달구 덕영대로 924' },
+  { icon: '🏛️', label: '시청', address: '수원시청', lng: 127.028715898311, lat: 37.263584678785 },
 ];
 
 /** 출발지 기본값 — CLAUDE.md: 현재 위치(수원시 영통구) */
