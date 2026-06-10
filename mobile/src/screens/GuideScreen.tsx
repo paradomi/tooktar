@@ -238,7 +238,11 @@ export default function GuideScreen({ route, navigation }: Props) {
 
               {distToTarget != null ? (
                 <Text style={styles.distText}>
-                  남은 거리 <Text style={styles.distNum}>{distToTarget}</Text> m
+                  남은 거리{' '}
+                  <Text style={styles.distNum}>
+                    {distToTarget >= 1000 ? (distToTarget / 1000).toFixed(1) : distToTarget}
+                  </Text>{' '}
+                  {distToTarget >= 1000 ? 'km' : 'm'}
                 </Text>
               ) : (
                 <Text style={styles.distMuted}>위치 확인 중…</Text>
