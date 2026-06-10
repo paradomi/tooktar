@@ -22,6 +22,7 @@ import DraggableFavoriteGrid from '../components/DraggableFavoriteGrid';
 import PlaceSearchInput from '../components/PlaceSearchInput';
 import { useFavorites } from '../store/favorites';
 import { useRecents } from '../store/recents';
+import TutorialOverlay from '../components/TutorialOverlay';
 import { checkHealth, waitForBackend, geocode, coordToAddress, type Coord } from '../api/client';
 import { getCurrentCoord } from '../utils/location';
 import type { RootStackParamList } from '../navigation/types';
@@ -42,6 +43,7 @@ export default function HomeScreen({ navigation }: Props) {
   const { favorites, addFavorite, removeFavorite, reorderFavorites } = useFavorites();
   const { recents, addRecent, removeRecent, clearRecents } = useRecents();
   const [editing, setEditing] = useState(false);
+  const [showTutorial, setShowTutorial] = useState(false);
 
   useEffect(() => {
     // 첫 시도 실패 시 콜드 스타트(서버 깨우기)로 보고 최대 75초 재시도
@@ -124,7 +126,7 @@ export default function HomeScreen({ navigation }: Props) {
     <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
       <StatusBar style="dark" />
       <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
-        {/* 상단 설정 버튼 */}
+        {/* 상단 설정 · 사용법 버튼 */}
         <View style={styles.topBar}>
           <Pressable
             style={styles.settingsBtn}
@@ -133,6 +135,14 @@ export default function HomeScreen({ navigation }: Props) {
             accessibilityLabel="설정"
           >
             <Text style={styles.settingsText}>⚙️ 설정</Text>
+          </Pressable>
+          <Pressable
+            style={styles.settingsBtn}
+            onPress={() => setShowTutorial(true)}
+            accessibilityRole="button"
+            accessibilityLabel="사용법 안내 보기"
+          >
+            <Text style={styles.settingsText}>❓ 사용법</Text>
           </Pressable>
         </View>
 
@@ -280,6 +290,9 @@ export default function HomeScreen({ navigation }: Props) {
           </>
         )}
       </ScrollView>
+
+      {/* 사용법 튜토리얼 */}
+      <TutorialOverlay visible={showTutorial} onClose={() => setShowTutorial(false)} />
     </SafeAreaView>
   );
 }
@@ -315,7 +328,7 @@ const styles = StyleSheet.create({
     borderLeftColor: colors.border,
   },
   recentDeleteText: { fontSize: sizes.fontBody, color: colors.gray, fontWeight: '700' },
-  topBar: { flexDirection: 'row', justifyContent: 'flex-start' },
+  topBar: { flexDirection: 'row', justifyContent: 'space-between' },
   settingsBtn: {
     minHeight: 40,
     paddingHorizontal: 14,
