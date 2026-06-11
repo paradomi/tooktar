@@ -437,14 +437,22 @@ export async function subwayDirection(
 
 /** 지하철 진입/하차 출구 추론 (백엔드 /subway/exits)
  *  반환: { 역명: { in?: "7번", out?: "10번" } } */
+/** 역별 추천 진입/하차 출구 + 좌표 (휠체어 모드: 접근가능 출구로 제한됨) */
+export interface ExitInfo {
+  in?: string; // 진입 출구 라벨 (예: "7번")
+  out?: string; // 하차 출구 라벨
+  in_coord?: { lng: number; lat: number };
+  out_coord?: { lng: number; lat: number };
+}
+
 export async function subwayExits(
   steps: RouteStep[],
   origin?: Coord,
   dest?: Coord,
   wheel = false
-): Promise<Record<string, { in?: string; out?: string }>> {
+): Promise<Record<string, ExitInfo>> {
   try {
-    const r = await postJson<{ exits: Record<string, { in?: string; out?: string }> }>(
+    const r = await postJson<{ exits: Record<string, ExitInfo> }>(
       '/subway/exits',
       { steps, origin, dest, wheel },
       15000

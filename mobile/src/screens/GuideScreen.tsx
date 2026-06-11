@@ -9,7 +9,13 @@ import * as Haptics from 'expo-haptics';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { colors, sizes } from '../theme';
 import { watchPosition, distanceM } from '../utils/location';
-import { getConfig, transitColor, type RouteStep } from '../api/client';
+import {
+  getConfig,
+  subwayExits,
+  transitColor,
+  type RouteStep,
+  type ExitInfo,
+} from '../api/client';
 import WalkDetailView from '../components/WalkDetailView';
 import TransitProgressView from '../components/TransitProgressView';
 import type { RootStackParamList } from '../navigation/types';
@@ -32,11 +38,13 @@ interface GuideStep {
   sub: string;
 }
 
-/** route.steps → 안내용 step 리스트 (좌표 보완) */
+/** route.steps → 안내용 step 리스트 (좌표 보완).
+ *  exitMap 이 있으면(휠체어 모드) 지하철 진입/하차 도보 지점을 추천 출구(엘리베이터) 좌표로 스냅. */
 function buildGuideSteps(
   steps: RouteStep[],
   origin: { lat: number; lng: number },
-  dest: { lat: number; lng: number }
+  dest: { lat: number; lng: number },
+  exitMap: Record<string, ExitInfo> = {}
 ): GuideStep[] {
   const out: GuideStep[] = [];
   steps.forEach((s, i) => {
@@ -75,6 +83,20 @@ function buildGuideSteps(
         sx = origin.lng;
         sy = origin.lat;
       }
+      // 추천 출구 스냅: 다음이 지하철 승차면 그 역의 진입(in) 출구로,
+      // 이전이 지하철 하차면 그 역의 하차(out) 출구에서 출발
+      const inCoord = next?.type === 'subway' ? exitMap[next.start_name ?? '']?.in_coord : undefined;
+      if (inCoord) {
+        ex = inCoord.lng;
+        ey = inCoord.lat;
+      }
+      const prev = steps[i - 1];
+      const outCoord = prev?.type === 'subway' ? exitMap[prev.end_name ?? '']?.out_coord : undefined;
+      if (outCoord) {
+        sx = outCoord.lng;
+        sy = outCoord.lat;
+      }
+      const exitLabel = next?.type === 'subway' ? exitMap[next.start_name ?? '']?.in : undefined;
       out.push({
         idx: i,
         step: s,
@@ -83,7 +105,7 @@ function buildGuideSteps(
         startLat: sy as number,
         startLng: sx as number,
         kind: 'walk',
-        title: toName ? `${toName}까지 도보` : '도보 이동',
+        title: toName ? `${toName}${exitLabel ? ` ${exitLabel} 출구` : ''}까지 도보` : '도보 이동',
         sub: s.desc || '',
       });
     } else if (s.type === 'bus' || s.type === 'subway') {
@@ -129,9 +151,18 @@ function buildGuideSteps(
 
 export default function GuideScreen({ route, navigation }: Props) {
   const { route: r, origin, dest, mode } = route.params;
+  // 휠체어 모드: 추천 출구(엘리베이터 접근가능) 좌표 로드 → 도보 목표 스냅
+  const [exitMap, setExitMap] = useState<Record<string, ExitInfo>>({});
+  useEffect(() => {
+    if (mode !== 'wheel') return;
+    subwayExits(r.steps ?? [], origin, dest, true)
+      .then(setExitMap)
+      .catch(() => {});
+  }, [r.steps, origin, dest, mode]);
+
   const guideSteps = useMemo(
-    () => buildGuideSteps(r.steps ?? [], origin, dest),
-    [r.steps, origin, dest]
+    () => buildGuideSteps(r.steps ?? [], origin, dest, mode === 'wheel' ? exitMap : {}),
+    [r.steps, origin, dest, mode, exitMap]
   );
 
   const [stepIdx, setStepIdx] = useState(0);

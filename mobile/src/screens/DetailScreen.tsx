@@ -31,6 +31,7 @@ import {
   type NextTrain,
   type LaneData,
   type TransferCtx,
+  type ExitInfo,
 } from '../api/client';
 import type { RootStackParamList } from '../navigation/types';
 
@@ -133,10 +134,9 @@ export default function DetailScreen({ route, navigation }: Props) {
   const [walkLines, setWalkLines] = useState<{ lat: number; lng: number }[][]>([]);
   // 지하철 step별 방면 라벨 (step index → "(종점, 인접역) 방면")
   const [directions, setDirections] = useState<Record<number, string>>({});
-  // 역명 → {in, out} 출구
-  const [subwayExitMap, setSubwayExitMap] = useState<
-    Record<string, { in?: string; out?: string }>
-  >({});
+  // 역명 → {in, out} 출구 (+좌표)
+  const [subwayExitMap, setSubwayExitMap] = useState<Record<string, ExitInfo>>({});
+  const [exitsReady, setExitsReady] = useState(false); // 출구 추론 완료 여부 (휠체어 도보선 계산 게이트)
   const [facilities, setFacilities] = useState<StationFacility[]>([]);
   const [loadingFac, setLoadingFac] = useState(false);
   const [speaking, setSpeaking] = useState(false);
@@ -168,7 +168,7 @@ export default function DetailScreen({ route, navigation }: Props) {
     };
   }, []);
 
-  // 지도: 카카오 키 + lane 폴리라인 + 도보경로 + 현재 위치 로드
+  // 지도: 카카오 키 + lane 폴리라인 + 현재 위치 로드
   const loadMap = useCallback(async () => {
     const cfg = await getConfig();
     setKakaoKey(cfg.kakao_js_key);
@@ -176,11 +176,18 @@ export default function DetailScreen({ route, navigation }: Props) {
       const ld = await loadLane(r.map_obj);
       setLane(ld);
     }
-    // 도보 구간(Tmap 보행경로) — ODsay lane엔 도보 좌표가 없어 별도 호출.
-    // ODsay 도보 step은 한쪽 끝점만 줄 때가 많음 → 빠진 끝점을
-    // 인접 transit step / 출발·도착지 좌표로 보완한다.
+    // 현재 위치(GPS) — 파란 점 마커용
+    const c = await getCurrentCoord();
+    if (c) setMyLocation(c);
+  }, [r.map_obj]);
+
+  // 도보 폴리라인(Tmap 보행경로) — ODsay lane엔 도보 좌표가 없어 별도 호출.
+  // ODsay 도보 step은 한쪽 끝점만 줄 때가 많음 → 빠진 끝점을 인접 transit/출발·도착지로 보완.
+  // 휠체어 모드: 지하철 진입/하차 지점을 추천 출구(엘리베이터 접근가능) 좌표로 스냅.
+  const computeWalkLines = useCallback(async () => {
     const opt = mode === 'wheel' ? 4 : 0; // 휠체어=계단 회피
     const steps = r.steps ?? [];
+    const snap = mode === 'wheel'; // 출구 스냅은 휠체어 모드에서만
     const walkJobs: { sx: number; sy: number; ex: number; ey: number }[] = [];
     steps.forEach((s, i) => {
       if (s.type !== 'walk') return;
@@ -202,6 +209,15 @@ export default function DetailScreen({ route, navigation }: Props) {
         }
         if (!ex || !ey) { ex = dest.lng; ey = dest.lat; }
       }
+      // 추천 출구 스냅: 다음이 지하철 승차면 진입(in) 출구로, 이전이 지하철 하차면 하차(out) 출구로
+      if (snap) {
+        const nx = steps[i + 1];
+        const inCoord = nx?.type === 'subway' ? subwayExitMap[nx.start_name ?? '']?.in_coord : undefined;
+        if (inCoord) { ex = inCoord.lng; ey = inCoord.lat; }
+        const pv = steps[i - 1];
+        const outCoord = pv?.type === 'subway' ? subwayExitMap[pv.end_name ?? '']?.out_coord : undefined;
+        if (outCoord) { sx = outCoord.lng; sy = outCoord.lat; }
+      }
       if (sx && sy && ex && ey) {
         walkJobs.push({ sx, sy, ex, ey });
       }
@@ -214,10 +230,13 @@ export default function DetailScreen({ route, navigation }: Props) {
       );
       setWalkLines(lines.filter((l) => l.length > 1));
     }
-    // 현재 위치(GPS) — 파란 점 마커용
-    const c = await getCurrentCoord();
-    if (c) setMyLocation(c);
-  }, [r.map_obj, r.steps, mode]);
+  }, [r.steps, mode, origin, dest, subwayExitMap]);
+
+  // 휠체어 모드는 출구 추론이 끝난 뒤 도보선 계산 (추천 출구 좌표 반영)
+  useEffect(() => {
+    if (mode === 'wheel' && !exitsReady) return;
+    computeWalkLines();
+  }, [computeWalkLines, exitsReady, mode]);
 
   // 지하철 방면 + 진입/하차 출구 로드
   const loadSubwayInfo = useCallback(async () => {
@@ -238,6 +257,7 @@ export default function DetailScreen({ route, navigation }: Props) {
     // 출구: 전체 step 흐름으로 한 번에 (휠체어면 접근가능 출구로 제한)
     const ex = await subwayExits(steps2, origin, dest, mode === 'wheel');
     setSubwayExitMap(ex);
+    setExitsReady(true); // 도보 폴리라인 계산 게이트 해제
   }, [r.steps, origin, dest, mode]);
 
   // 실시간 도착 정보 로드 (버스 + 지하철)

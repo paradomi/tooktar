@@ -155,4 +155,20 @@ def infer_subway_exits(steps, origin_coord=None, dest_coord=None, accessible_map
                 no = _nearest_exit(end_name, out_lng, out_lat, allowed=_allowed_out)
                 if no:
                     result.setdefault(end_name, {})["out"] = f"{no}번"
+
+    # 추천 출구의 좌표 부여 — 도보 폴리라인이 해당 출구(엘리베이터)로 향하게 하는 용도
+    for st, info in result.items():
+        exits = _cached_station_exits(st)
+        if not exits:
+            continue
+        for key in ("in", "out"):
+            label = info.get(key)
+            if not label:
+                continue
+            m = re.search(r"\d+", label)
+            if not m:
+                continue
+            c = exits.get(int(m.group())) or exits.get(m.group())
+            if c:
+                info[f"{key}_coord"] = {"lng": float(c[0]), "lat": float(c[1])}
     return result
