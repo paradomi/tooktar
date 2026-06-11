@@ -83,6 +83,95 @@ def analyze_subway_diagram(img_url, station_name="", target_direction=""):
     return None
 
 
+def _gemini_text(contents):
+    """Gemini 텍스트 생성 공통 헬퍼 — 모델 fallback (2.5 → 2.0 → 1.5 flash). 실패 시 None."""
+    api_key = os.getenv("Gemini", "")
+    if not api_key:
+        return None
+    try:
+        from google import genai
+    except Exception:
+        return None
+    try:
+        client = genai.Client(api_key=api_key)
+    except Exception:
+        return None
+    for model_name in ("gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"):
+        try:
+            response = client.models.generate_content(model=model_name, contents=contents)
+            text = (response.text or "").strip()
+            if text:
+                return text
+        except Exception:
+            continue
+    return None
+
+
+def generate_journey_narrative(route, mode, origin_name, dest_name, transfers=None):
+    """여정 예행연습 내러티브 + 환승 집중 브리핑 (Gemini 텍스트 생성).
+
+    Args:
+        route: 경로 dict (steps, total_minutes, transfers, total_walk)
+        mode: "fast" / "wheel" / "walk_less"
+        transfers: 환승 컨텍스트 목록
+            [{"alight": 하차 설명, "board": 다음 승차 설명,
+              "facility": KRIC 이동경로 요약, "arrival": 다음 차량 도착 정보, "walk": 환승 도보}]
+
+    Returns:
+        str | None: 마크다운 안내 텍스트. Gemini 실패 시 None (호출측 템플릿 유지).
+    """
+    steps = route.get("steps", []) or []
+    if not steps:
+        return None
+
+    step_lines = []
+    for s in steps:
+        t = s.get("type")
+        if t == "walk":
+            step_lines.append(f"- 도보: {s.get('desc', '')}")
+        elif t == "bus":
+            step_lines.append(
+                f"- 버스 {s.get('bus_no', '')}번: {s.get('start_name', '')} → "
+                f"{s.get('end_name', '')} ({s.get('station_count', '?')}정거장)"
+            )
+        elif t == "subway":
+            step_lines.append(
+                f"- 지하철 {s.get('line_name', '')}: {s.get('start_name', '')} → "
+                f"{s.get('end_name', '')} ({s.get('station_count', '?')}개 역)"
+            )
+
+    transfer_lines = []
+    for i, tr in enumerate(transfers or [], 1):
+        parts = [f"환승 {i}: {tr.get('alight', '')} 후 {tr.get('board', '')} 탑승"]
+        if tr.get("walk"):
+            parts.append(f"환승 도보: {tr['walk']}")
+        if tr.get("facility"):
+            parts.append(f"역내 이동경로(KRIC): {tr['facility']}")
+        if tr.get("arrival"):
+            parts.append(f"다음 차량: {tr['arrival']}")
+        transfer_lines.append(" / ".join(parts))
+
+    persona = (
+        "휠체어 이용자" if mode == "wheel" else "고령자 등 교통약자"
+    )
+    prompt = (
+        f"당신은 {persona}를 위한 따뜻하고 믿음직한 길안내 비서입니다.\n"
+        f"아래 경로 데이터를 바탕으로 출발 전 브리핑을 작성하세요.\n\n"
+        f"[여정] {origin_name} → {dest_name}, 총 {route.get('total_minutes', '?')}분, "
+        f"환승 {route.get('transfers', 0)}회, 도보 총 {route.get('total_walk', 0)}m\n"
+        f"[단계]\n" + "\n".join(step_lines) + "\n"
+        + (("[환승 정보]\n" + "\n".join(transfer_lines) + "\n") if transfer_lines else "")
+        + "\n출력 형식 (마크다운):\n"
+        "1) 첫 단락: 여정 전체를 미리 그려주는 '예행연습' 3~4문장. "
+        "이 경로에서 **가장 까다로운 구간 1곳**을 콕 짚어 이유와 대비 방법을 알려줄 것.\n"
+        "2) 환승이 있으면 각 환승마다 새 단락으로 '🔄 환승 안내 — (장소)' 형식 제목 뒤에 "
+        "2~3문장: 하차 후 이동 방법(엘리베이터 등 제공된 시설 정보 활용), 다음 차량 도착/저상 정보, 여유 시간 조언.\n\n"
+        "규칙: 정중한 존댓말, 핵심 단어는 **굵게**, 제공된 정보만 사용(추측 금지), "
+        "인사말 없이 바로 본론, 전체 10문장 이내."
+    )
+    return _gemini_text(prompt)
+
+
 def _safe_int(v, default=0):
     try:
         return int(v) if v is not None else default

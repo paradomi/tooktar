@@ -474,6 +474,35 @@ export async function diagramAnalysis(
   }
 }
 
+/** 환승 1건의 컨텍스트 (AI 여정 내러티브 입력용) */
+export interface TransferCtx {
+  alight: string; // 하차 설명 (예: "망포역 정류장 (13-1번 버스 하차)")
+  board: string; // 다음 승차 설명
+  facility?: string; // KRIC 역내 이동경로 요약
+  arrival?: string; // 다음 차량 도착/저상 정보
+  walk?: string; // 환승 도보 설명
+}
+
+/** AI 여정 예행연습 내러티브 + 환승 집중 브리핑 (백엔드 /briefing/narrative, Gemini) */
+export async function getNarrative(args: {
+  route: Route | Record<string, unknown>;
+  mode?: string;
+  origin_name?: string;
+  dest_name?: string;
+  transfers?: TransferCtx[];
+}): Promise<string> {
+  try {
+    const r = await postJson<{ narrative: string }>(
+      '/briefing/narrative',
+      { mode: 'fast', origin_name: '출발', dest_name: '도착', transfers: [], ...args },
+      45000 // Gemini 생성이 느릴 수 있음
+    );
+    return r.narrative;
+  } catch {
+    return '';
+  }
+}
+
 /** AI 경로 브리핑 (백엔드 /briefing) */
 export async function getBriefing(args: {
   route: Route | Record<string, unknown>;

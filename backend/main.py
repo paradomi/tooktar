@@ -36,7 +36,11 @@ from services.rail_portal import (
     get_wheelchair_lift,
     direction_label,
 )
-from services.ai_briefing import generate_briefing, analyze_subway_diagram
+from services.ai_briefing import (
+    generate_briefing,
+    analyze_subway_diagram,
+    generate_journey_narrative,
+)
 from services.subway_exits import infer_subway_exits
 
 
@@ -77,6 +81,15 @@ class BriefingReq(BaseModel):
     origin_name: str = "출발"
     dest_name: str = "도착"
     diagram_insight: Optional[str] = None
+
+
+class NarrativeReq(BaseModel):
+    route: dict
+    mode: str = "fast"
+    origin_name: str = "출발"
+    dest_name: str = "도착"
+    # 환승 컨텍스트: [{alight, board, facility, arrival, walk}]
+    transfers: list = []
 
 
 class ScoreReq(BaseModel):
@@ -329,6 +342,16 @@ def briefing(req: BriefingReq):
         diagram_insight=req.diagram_insight,
     )
     return {"briefing": text}
+
+
+@app.post("/briefing/narrative")
+def briefing_narrative(req: NarrativeReq):
+    """AI 여정 예행연습 내러티브 + 환승 집중 브리핑 (Gemini 텍스트 생성).
+    Gemini 실패 시 빈 문자열 → 클라이언트는 템플릿 브리핑만 표시."""
+    text = generate_journey_narrative(
+        req.route, req.mode, req.origin_name, req.dest_name, transfers=req.transfers
+    )
+    return {"narrative": text or ""}
 
 
 @app.get("/subway/diagram-analysis")

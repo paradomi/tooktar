@@ -1,7 +1,7 @@
 /** 경로 상세 화면 — pages/2_경로_상세.py 이식 (지도 제외)
  *  단계별 안내 + 버스/지하철 실시간 도착 + AI 브리핑
  */
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, ActivityIndicator, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
@@ -19,6 +19,7 @@ import {
   nextTrains,
   subwayFacilities,
   getBriefing,
+  getNarrative,
   diagramAnalysis,
   getConfig,
   loadLane,
@@ -29,6 +30,7 @@ import {
   type RouteStep,
   type NextTrain,
   type LaneData,
+  type TransferCtx,
 } from '../api/client';
 import type { RootStackParamList } from '../navigation/types';
 
@@ -121,6 +123,8 @@ export default function DetailScreen({ route, navigation }: Props) {
   const [busMap, setBusMap] = useState<Record<number, BusInfo>>({});
   const [subMap, setSubMap] = useState<Record<number, SubInfo>>({});
   const [briefing, setBriefing] = useState<string>('');
+  const [narrative, setNarrative] = useState<string>(''); // AI 여정 예행연습 + 환승 집중
+  const [loadingNarrative, setLoadingNarrative] = useState(true);
   const [loadingArrivals, setLoadingArrivals] = useState(true);
   const [loadingBriefing, setLoadingBriefing] = useState(true);
   const [kakaoKey, setKakaoKey] = useState<string>('');
@@ -144,7 +148,7 @@ export default function DetailScreen({ route, navigation }: Props) {
       setSpeaking(false);
       return;
     }
-    const text = toSpeech(briefing);
+    const text = toSpeech([narrative, briefing].filter(Boolean).join('\n\n'));
     if (!text) return;
     setSpeaking(true);
     Speech.speak(text, {
@@ -154,7 +158,7 @@ export default function DetailScreen({ route, navigation }: Props) {
       onStopped: () => setSpeaking(false),
       onError: () => setSpeaking(false),
     });
-  }, [speaking, briefing]);
+  }, [speaking, briefing, narrative]);
 
   // 화면 떠날 때 음성 정지
   useEffect(() => {
@@ -369,6 +373,59 @@ export default function DetailScreen({ route, navigation }: Props) {
     loadSubwayInfo();
   }, [loadArrivals, loadBriefing, loadMap, loadFacilities, loadSubwayInfo]);
 
+  // AI 여정 내러티브: 도착정보·시설 로드가 끝나면 환승 컨텍스트를 모아 1회 생성
+  const narrativeRequested = useRef(false);
+  useEffect(() => {
+    if (narrativeRequested.current) return;
+    if (loadingArrivals || loadingFac) return;
+    narrativeRequested.current = true;
+
+    const transfers: TransferCtx[] = [];
+    steps.forEach((s, i) => {
+      if (s.type !== 'walk') return;
+      const prev = steps[i - 1];
+      const next = steps[i + 1];
+      if (!prev || !next) return;
+      if (!['bus', 'subway'].includes(prev.type) || !['bus', 'subway'].includes(next.type))
+        return;
+      const alight =
+        prev.type === 'bus'
+          ? `${prev.end_name ?? ''} 정류장 (${prev.bus_no ?? ''}번 버스 하차)`
+          : `${prev.end_name ?? ''}역 (${prev.line_name ?? '지하철'} 하차)`;
+      const board =
+        next.type === 'bus'
+          ? `${next.start_name ?? ''} 정류장에서 ${next.bus_no ?? ''}번 버스`
+          : `${next.start_name ?? ''}역에서 ${next.line_name ?? '지하철'}`;
+      // KRIC 역내 이동경로 요약 (하차/승차 역 이름 매칭)
+      const names = [prev.end_name, next.start_name].filter(Boolean) as string[];
+      const fac = facilities.find((f) =>
+        names.some((n) => f.rawName.includes(n) || n.includes(f.rawName))
+      );
+      const facility = fac
+        ? fac.movement
+            .slice(0, 3)
+            .map((m: any) => m?.mvContDtl || m?.stMovePath || '')
+            .filter(Boolean)
+            .join(' / ')
+        : '';
+      // 다음 버스 도착·저상 정보
+      let arrival = '';
+      if (next.type === 'bus') {
+        const b = busMap[i + 1];
+        const p = b?.predictions?.[0];
+        if (p?.minutes != null)
+          arrival = `${p.minutes}분 후 도착${
+            p.lowFloor ? ' (저상버스)' : b?.lowFloorOnRoute ? ' (노선 저상 운행)' : ''
+          }`;
+      }
+      transfers.push({ alight, board, facility, arrival, walk: s.desc ?? '' });
+    });
+
+    getNarrative({ route: r, mode, origin_name: origin.name, dest_name: dest.name, transfers })
+      .then(setNarrative)
+      .finally(() => setLoadingNarrative(false));
+  }, [loadingArrivals, loadingFac, steps, facilities, busMap, r, mode, origin, dest]);
+
   const isTransferWalk = (idx: number) => {
     const s = steps[idx];
     if (s.type !== 'walk') return false;
@@ -493,6 +550,22 @@ export default function DetailScreen({ route, navigation }: Props) {
             </Pressable>
           )}
         </View>
+        {/* AI 여정 미리보기 (예행연습 + 환승 집중 안내) */}
+        {(loadingNarrative || !!narrative) && (
+          <View style={styles.narrativeBox}>
+            {loadingNarrative ? (
+              <View style={styles.narrativeLoading}>
+                <ActivityIndicator color={colors.navy} size="small" />
+                <Text style={styles.narrativeLoadingText}>AI가 여정을 미리 살펴보는 중…</Text>
+              </View>
+            ) : (
+              <>
+                <Text style={styles.narrativeTitle}>🧭 여정 미리보기</Text>
+                <Text style={styles.narrativeText}>{stripMd(narrative)}</Text>
+              </>
+            )}
+          </View>
+        )}
         <View style={styles.briefingBox}>
           {loadingBriefing ? (
             <ActivityIndicator color={colors.primary} />
@@ -677,4 +750,21 @@ const styles = StyleSheet.create({
     minHeight: 60,
   },
   briefingText: { fontSize: sizes.fontBody, color: colors.darkText, lineHeight: 28 },
+  narrativeBox: {
+    backgroundColor: '#EAF3FC',
+    borderRadius: sizes.radius,
+    borderWidth: 1.5,
+    borderColor: '#BBD7F0',
+    padding: 16,
+    marginBottom: 10,
+  },
+  narrativeLoading: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  narrativeLoadingText: { fontSize: sizes.fontSmall, color: colors.navy, fontWeight: '600' },
+  narrativeTitle: {
+    fontSize: sizes.fontBody,
+    fontWeight: '800',
+    color: colors.navy,
+    marginBottom: 8,
+  },
+  narrativeText: { fontSize: sizes.fontBody, color: colors.darkText, lineHeight: 28 },
 });
