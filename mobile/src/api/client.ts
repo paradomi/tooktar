@@ -30,12 +30,26 @@ export interface Coord {
   lat: number;
 }
 
+// 백엔드 생존 알림 — 아무 API 든 성공하면 구독자(연결 배너 등)에게 알림
+const aliveListeners = new Set<() => void>();
+/** 백엔드 응답 성공 시 호출될 콜백 등록. 반환 함수로 해제. */
+export function onBackendAlive(cb: () => void): () => void {
+  aliveListeners.add(cb);
+  return () => {
+    aliveListeners.delete(cb);
+  };
+}
+function notifyAlive() {
+  aliveListeners.forEach((cb) => cb());
+}
+
 async function getJson<T>(path: string, timeoutMs = 8000): Promise<T> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
     const res = await fetch(`${BASE_URL}${path}`, { signal: ctrl.signal });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    notifyAlive();
     return (await res.json()) as T;
   } finally {
     clearTimeout(timer);
@@ -53,6 +67,7 @@ async function postJson<T>(path: string, body: unknown, timeoutMs = 12000): Prom
       signal: ctrl.signal,
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    notifyAlive();
     return (await res.json()) as T;
   } finally {
     clearTimeout(timer);

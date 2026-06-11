@@ -24,7 +24,14 @@ import PlaceSearchInput from '../components/PlaceSearchInput';
 import { useFavorites } from '../store/favorites';
 import { useRecents } from '../store/recents';
 import CoachMark, { type SpotRect } from '../components/CoachMark';
-import { checkHealth, waitForBackend, geocode, coordToAddress, type Coord } from '../api/client';
+import {
+  checkHealth,
+  waitForBackend,
+  onBackendAlive,
+  geocode,
+  coordToAddress,
+  type Coord,
+} from '../api/client';
 import { getCurrentCoord } from '../utils/location';
 import type { RootStackParamList } from '../navigation/types';
 
@@ -157,6 +164,9 @@ export default function HomeScreen({ navigation }: Props) {
   useEffect(() => {
     if (tour === 3 && editIndex != null) setTour(4);
   }, [editIndex, tour]);
+
+  // 아무 API 호출이든 성공하면 즉시 '연결됨' 처리 (헬스체크와 무관하게 배너 제거)
+  useEffect(() => onBackendAlive(() => setBackendUp(true)), []);
 
   useEffect(() => {
     // 콜드 스타트 대응: 연결될 때까지 감시하고, 성공하는 순간 배너 제거
