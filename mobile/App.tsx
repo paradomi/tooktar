@@ -22,20 +22,43 @@ import type { RootStackParamList } from './src/navigation/types';
 // 웹: expo-font 의 JS 로딩(6초 타임아웃, 느린 폰 네트워크에서 실패)에 의존하지 않고
 // 브라우저 네이티브 @font-face(font-display: swap)로 등록 → 폰트가 도착하는 대로 적용.
 // 첫 렌더 전에 실행되도록 모듈 스코프에서 주입.
+import { Asset } from 'expo-asset';
+
+// 패키지 metadata.json 의 공식 Google Fonts URL — 로컬 자산 해석 실패 시 폴백
+const GSTATIC: Record<string, string> = {
+  GowunBatang_400Regular:
+    'https://fonts.gstatic.com/s/gowunbatang/v12/ijwSs5nhRMIjYsdSgcMa3wRhXLH-yuAtLw.ttf',
+  GowunBatang_700Bold:
+    'https://fonts.gstatic.com/s/gowunbatang/v12/ijwNs5nhRMIjYsdSgcMa3wRZ4J7awssxJii23w.ttf',
+};
+
+function resolveFontUri(family: string, mod: unknown): string {
+  if (typeof mod === 'string') return mod; // 이미 URL 문자열
+  try {
+    const uri = Asset.fromModule(mod as number).uri; // 번들 자산 → URL (dev/prod 모두)
+    if (uri) return uri;
+  } catch {
+    // fall through
+  }
+  return GSTATIC[family];
+}
+
 const webFontInjected = (() => {
   if (Platform.OS !== 'web' || typeof document === 'undefined') return false;
-  const urls: [string, unknown][] = [
+  const mods: [string, unknown][] = [
     ['GowunBatang_400Regular', GowunBatang_400Regular],
     ['GowunBatang_700Bold', GowunBatang_700Bold],
   ];
-  const css = urls
-    .filter(([, u]) => typeof u === 'string')
-    .map(
-      ([family, u]) =>
-        `@font-face{font-family:'${family}';src:url('${u}') format('truetype');font-display:swap;}`
-    )
+  const css = mods
+    .map(([family, mod]) => {
+      const uri = resolveFontUri(family, mod);
+      const srcs = [uri, GSTATIC[family]]
+        .filter((u, i, arr) => u && arr.indexOf(u) === i) // 중복 제거
+        .map((u) => `url('${u}') format('truetype')`)
+        .join(',');
+      return `@font-face{font-family:'${family}';src:${srcs};font-display:swap;}`;
+    })
     .join('\n');
-  if (!css) return false;
   const style = document.createElement('style');
   style.textContent = css;
   document.head.appendChild(style);
