@@ -33,6 +33,7 @@ function scaleProps(props: any) {
   if (!props) return props;
   const flat = (StyleSheet.flatten(props.style) || {}) as {
     fontSize?: number;
+    lineHeight?: number;
     fontWeight?: any;
     fontFamily?: string;
   };
@@ -46,6 +47,10 @@ function scaleProps(props: any) {
   if (needScale) {
     const baseFs = typeof flat.fontSize === 'number' ? flat.fontSize : 14;
     extra.fontSize = Math.round(baseFs * currentScale);
+    // 줄 간격도 같은 배율로 — 고정 lineHeight 에 큰 글자가 들어가 위아래로 겹치는 것 방지
+    if (typeof flat.lineHeight === 'number') {
+      extra.lineHeight = Math.round(flat.lineHeight * currentScale);
+    }
   }
   if (needFont) {
     extra.fontFamily = pickFamily(flat.fontWeight);
