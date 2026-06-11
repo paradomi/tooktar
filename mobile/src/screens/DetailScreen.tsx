@@ -148,7 +148,8 @@ export default function DetailScreen({ route, navigation }: Props) {
       setSpeaking(false);
       return;
     }
-    const text = toSpeech([narrative, briefing].filter(Boolean).join('\n\n'));
+    // 내러티브가 있으면 그것만, 없으면 대체 템플릿 브리핑을 읽음
+    const text = toSpeech(narrative || briefing);
     if (!text) return;
     setSpeaking(true);
     Speech.speak(text, {
@@ -537,7 +538,7 @@ export default function DetailScreen({ route, navigation }: Props) {
         {/* AI 브리핑 */}
         <View style={styles.briefingHeader}>
           <Text style={styles.sectionTitle}>🤖 AI 경로 브리핑</Text>
-          {!loadingBriefing && !!briefing && (
+          {(!!narrative || (!loadingBriefing && !!briefing)) && (
             <Pressable
               style={[styles.speakBtn, speaking && styles.speakBtnActive]}
               onPress={toggleSpeech}
@@ -566,13 +567,16 @@ export default function DetailScreen({ route, navigation }: Props) {
             )}
           </View>
         )}
-        <View style={styles.briefingBox}>
-          {loadingBriefing ? (
-            <ActivityIndicator color={colors.primary} />
-          ) : (
-            <Text style={styles.briefingText}>{stripMd(briefing)}</Text>
-          )}
-        </View>
+        {/* 템플릿 브리핑은 AI 내러티브 실패 시에만 대체 표시 */}
+        {!loadingNarrative && !narrative && (
+          <View style={styles.briefingBox}>
+            {loadingBriefing ? (
+              <ActivityIndicator color={colors.primary} />
+            ) : (
+              <Text style={styles.briefingText}>{stripMd(briefing)}</Text>
+            )}
+          </View>
+        )}
       </ScrollView>
     </SafeAreaView>
   );
