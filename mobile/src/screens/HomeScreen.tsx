@@ -105,16 +105,25 @@ export default function HomeScreen({ navigation }: Props) {
   const [editIndex, setEditIndex] = useState<number | null>(null);
   // 인터랙티브 투어: 현재 단계 (null=꺼짐)
   const [tour, setTour] = useState<number | null>(null);
+  // 스포트라이트 좌표는 '스크롤 콘텐츠 기준'으로 저장 → 스크롤해도 대상에 붙어 다님
   const [tourRect, setTourRect] = useState<SpotRect | null>(null);
+  const [tourScrollY, setTourScrollY] = useState(0); // 투어 중 실시간 스크롤 위치
   const rootRef = useRef<View>(null);
   const scrollRef = useRef<ScrollView>(null);
   const scrollYRef = useRef(0);
+  const tourActiveRef = useRef(false);
   const editToggleRef = useRef<View>(null);
   const formRef = useRef<View>(null);
   const gridRef = useRef<View>(null);
   const searchRef = useRef<View>(null);
 
-  // 투어 타깃 측정: 단계/레이아웃 변화 시 스포트라이트 위치 갱신 (화면 밖이면 스크롤로 끌어옴)
+  useEffect(() => {
+    tourActiveRef.current = tour != null;
+    if (tour != null) setTourScrollY(scrollYRef.current);
+  }, [tour]);
+
+  // 투어 타깃 측정: 콘텐츠 기준 좌표로 저장 (260ms 후 1차, 900ms 후 보정 재측정).
+  // 화면 밖이면 스크롤로 끌어오되, 좌표가 콘텐츠 기준이라 측정 타이밍과 무관하게 정확.
   useEffect(() => {
     if (tour == null) return;
     const t = TOUR[tour].target;
@@ -123,37 +132,31 @@ export default function HomeScreen({ navigation }: Props) {
       return;
     }
     const refMap = { edit: editToggleRef, form: formRef, grid: gridRef, search: searchRef };
-    const timer = setTimeout(() => {
+    const measure = (scrollIntoView: boolean) => {
       const target = refMap[t].current;
       const host = rootRef.current;
       if (!target || !host) return;
-      const apply = () =>
-        target.measureInWindow((tx, ty, tw, th) => {
-          host.measureInWindow((hx, hy, _hw, hh) => {
-            const rect = { x: tx - hx, y: ty - hy, w: tw, h: th + (TOUR[tour].extraH ?? 0) };
+      target.measureInWindow((tx, ty, tw, th) => {
+        host.measureInWindow((hx, hy, _hw, hh) => {
+          const yContent = ty - hy + scrollYRef.current; // 콘텐츠 기준 y
+          const rect = { x: tx - hx, y: yContent, w: tw, h: th + (TOUR[tour].extraH ?? 0) };
+          setTourRect(rect);
+          if (scrollIntoView) {
+            const viewY = yContent - scrollYRef.current; // 현재 화면 기준 y
             const visibleH = Math.min(rect.h, 220);
-            if (rect.y < 64 || rect.y + visibleH > hh - 80) {
-              scrollRef.current?.scrollTo({
-                y: Math.max(0, scrollYRef.current + rect.y - 130),
-                animated: true,
-              });
-              setTimeout(
-                () =>
-                  target.measureInWindow((tx2, ty2, tw2, th2) =>
-                    host.measureInWindow((hx2, hy2) =>
-                      setTourRect({ x: tx2 - hx2, y: ty2 - hy2, w: tw2, h: th2 + (TOUR[tour].extraH ?? 0) })
-                    )
-                  ),
-                380
-              );
-            } else {
-              setTourRect(rect);
+            if (viewY < 64 || viewY + visibleH > hh - 80) {
+              scrollRef.current?.scrollTo({ y: Math.max(0, yContent - 130), animated: true });
             }
-          });
+          }
         });
-      apply();
-    }, 260);
-    return () => clearTimeout(timer);
+      });
+    };
+    const t1 = setTimeout(() => measure(true), 260);
+    const t2 = setTimeout(() => measure(false), 900); // 레이아웃/폰트 안정 후 보정
+    return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+    };
   }, [tour, editing, editIndex, favorites]);
 
   // 투어 진행: 사용자의 실제 행동을 감지해 다음 단계로
@@ -268,10 +271,11 @@ export default function HomeScreen({ navigation }: Props) {
         ref={scrollRef}
         contentContainerStyle={styles.scroll}
         keyboardShouldPersistTaps="handled"
-        scrollEnabled={tour == null}
-        scrollEventThrottle={32}
+        scrollEventThrottle={16}
         onScroll={(e) => {
           scrollYRef.current = e.nativeEvent.contentOffset.y;
+          // 투어 중엔 스포트라이트가 스크롤을 따라가도록 상태로도 반영
+          if (tourActiveRef.current) setTourScrollY(e.nativeEvent.contentOffset.y);
         }}
       >
         {/* 상단 설정 · 사용법 버튼 */}
@@ -474,7 +478,11 @@ export default function HomeScreen({ navigation }: Props) {
       {tour != null && (
         <CoachMark
           visible
-          rect={TOUR[tour].target ? tourRect : null}
+          rect={
+            TOUR[tour].target && tourRect
+              ? { ...tourRect, y: tourRect.y - tourScrollY } // 콘텐츠 좌표 → 화면 좌표
+              : null
+          }
           title={TOUR[tour].title}
           text={TOUR[tour].text}
           step={tour}
