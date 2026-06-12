@@ -237,13 +237,14 @@ def has_low_floor_on_route(bus_no, region_hint=None):
     return False
 
 
-def has_low_floor_arriving(station_id, route_name, max_stops_ahead=30, fast=False):
+def has_low_floor_arriving(station_id, route_name, max_stops_ahead=30, fast=False, max_wait_min=25):
     """특정 정류장에 곧 도착하는 저상버스가 노선에 있는지.
 
     1) GBIS 도착정보로 routeId + 우리 정류장 staOrder 알아냄
     2) 도착예정 첫 두 대(lowPlate1/2) 중 저상이면 즉시 True
     3) 아니면 노선 차량 위치(BusLocation) 조회 → 저상 차량 중 우리 정류장
        이전(staOrder 차이 1~max_stops_ahead) 차량 있으면 True
+    판정은 max_wait_min분 이내 도착 예정 차량으로 한정 (도착시간 미제공 시 기존대로 인정).
     """
     if not station_id or not route_name:
         return False
@@ -267,16 +268,22 @@ def has_low_floor_arriving(station_id, route_name, max_stops_ahead=30, fast=Fals
         # → 노선번호로 직접 routeId 찾아 BusLocation에서 저상 운행 검증
         return has_low_floor_on_route(route_name)
 
-    # 도착예정 첫 두 대 중 저상 있으면 즉시 True
-    for k in ("lowPlate1", "lowPlate2"):
-        if str(matched.get(k) or "") == "1":
+    # 도착예정 첫 두 대 중 max_wait_min분 이내 저상 있으면 즉시 True
+    for pt_k, lp_k in (("predictTime1", "lowPlate1"), ("predictTime2", "lowPlate2")):
+        if str(matched.get(lp_k) or "") != "1":
+            continue
+        try:
+            pt = int(matched.get(pt_k))
+        except (ValueError, TypeError):
+            return True  # 도착시간 미제공 — 저상 운행 확인된 것으로 인정 (오탐 방지)
+        if pt <= max_wait_min:
             return True
 
-    # 빠른 모드: 다음 버스가 40분 넘게 남았으면 무거운 위치조회 생략
+    # 빠른 모드: 다음 버스가 max_wait_min분 넘게 남았으면 무거운 위치조회 생략
     if fast:
         try:
             _pt = int(matched.get("predictTime1"))
-            if _pt > 40:
+            if _pt > max_wait_min:
                 return False
         except (ValueError, TypeError):
             pass  # 도착시간 모르면 그대로 검증 진행
@@ -299,6 +306,8 @@ def has_low_floor_arriving(station_id, route_name, max_stops_ahead=30, fast=Fals
 
     # staOrder 측정 가능하면 거리 제한 적용
     if sta_order is not None:
+        # 정류장당 약 2분으로 환산해 max_wait_min분 이내 거리만 인정
+        stops_cap = min(max_stops_ahead, max(1, max_wait_min // 2))
         for v in vehicles:
             if not v.get("low_plate") or v.get("end_bus"):
                 continue
@@ -306,7 +315,7 @@ def has_low_floor_arriving(station_id, route_name, max_stops_ahead=30, fast=Fals
             if v_seq is None:
                 continue
             diff = sta_order - v_seq
-            if 0 < diff <= max_stops_ahead:
+            if 0 < diff <= stops_cap:
                 return True
         return False
 

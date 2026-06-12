@@ -371,6 +371,7 @@ def score_low_floor(req: ScoreReq):
     반환: [{"id", "score", "tier"}]
       score: 1.0=전 구간 저상확보, 0~1=부분, 0=저상없음, null=미확인, "subway_only"=버스없음
       tier:  0=확정/지하철, 1=부분, 2=미확인, 3=저상없음 (작을수록 우선)
+    저상 확보 판정은 25분 이내 도착 차량 기준.
     """
     # 1) 모든 경로의 버스 step에서 필요한 (station_id, bus_no) 검사를 중복 제거
     jobs = {}  # (station_id_or_empty, bus_no) -> (station_id, bus_no)
@@ -391,7 +392,7 @@ def score_low_floor(req: ScoreReq):
         station_id, bus_no = item
         try:
             if station_id:
-                return has_low_floor_arriving(station_id, bus_no, max_stops_ahead=15, fast=True)
+                return has_low_floor_arriving(station_id, bus_no, max_stops_ahead=15, fast=True, max_wait_min=25)
             return has_low_floor_on_route(bus_no)
         except Exception:
             return False
