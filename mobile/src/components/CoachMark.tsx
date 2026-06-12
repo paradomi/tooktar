@@ -1,5 +1,5 @@
 /** 코치마크 오버레이 — 실제 화면 요소에 스포트라이트(구멍 뚫린 어두운 막) + 맥동 링 + 말풍선.
- *  구멍 영역은 터치가 그대로 통과해 사용자가 실제 버튼을 눌러 진행한다.
+ *  화면 전체가 터치를 통과해 스크롤과 조작이 자유롭다.
  *  rect 가 null 이면 중앙 안내 카드(인트로/마무리)로 표시.
  */
 import React, { useEffect, useRef } from 'react';
@@ -21,6 +21,7 @@ interface Props {
   step: number;
   total: number;
   onSkip: () => void;
+  onClose: () => void;
   /** 있으면 말풍선에 진행 버튼 표시 (인트로 '시작하기' / 마지막 '완료') */
   actionLabel?: string;
   onAction?: () => void;
@@ -37,6 +38,7 @@ export default function CoachMark({
   step,
   total,
   onSkip,
+  onClose,
   actionLabel,
   onAction,
 }: Props) {
@@ -104,14 +106,14 @@ export default function CoachMark({
     <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
       {hole ? (
         <>
-          {/* 구멍 주변 4면 어두운 막 (터치 차단) — 구멍 안쪽은 실제 버튼이 눌림 */}
-          <View pointerEvents="auto" style={[styles.dim, { left: 0, top: 0, right: 0, height: hole.y }]} />
-          <View pointerEvents="auto" style={[styles.dim, { left: 0, top: hole.y, width: hole.x, height: hole.h }]} />
+          {/* 구멍 주변 4면 어두운 막 (터치 통과 — 스크롤/탭 그대로 가능) — 구멍 안쪽은 실제 버튼이 눌림 */}
+          <View pointerEvents="none" style={[styles.dim, { left: 0, top: 0, right: 0, height: hole.y }]} />
+          <View pointerEvents="none" style={[styles.dim, { left: 0, top: hole.y, width: hole.x, height: hole.h }]} />
           <View
-            pointerEvents="auto"
+            pointerEvents="none"
             style={[styles.dim, { left: hole.x + hole.w, top: hole.y, right: 0, height: hole.h }]}
           />
-          <View pointerEvents="auto" style={[styles.dim, { left: 0, top: hole.y + hole.h, right: 0, bottom: 0 }]} />
+          <View pointerEvents="none" style={[styles.dim, { left: 0, top: hole.y + hole.h, right: 0, bottom: 0 }]} />
           {/* 맥동 링 */}
           <Animated.View
             pointerEvents="none"
@@ -129,7 +131,7 @@ export default function CoachMark({
           />
         </>
       ) : (
-        <View pointerEvents="auto" style={[styles.dim, StyleSheet.absoluteFill]} />
+        <View pointerEvents="none" style={[styles.dim, StyleSheet.absoluteFill]} />
       )}
 
       {/* 말풍선 */}
@@ -158,9 +160,14 @@ export default function CoachMark({
           <Text style={styles.stepBadge}>
             {step + 1} / {total}
           </Text>
-          <Pressable onPress={onSkip} hitSlop={10} accessibilityRole="button" accessibilityLabel="안내 건너뛰기">
-            <Text style={styles.skip}>건너뛰기 ✕</Text>
-          </Pressable>
+          <View style={styles.headBtns}>
+            <Pressable onPress={onSkip} hitSlop={10} accessibilityRole="button" accessibilityLabel="이 단계 건너뛰기">
+              <Text style={styles.skip}>건너뛰기 ▸</Text>
+            </Pressable>
+            <Pressable onPress={onClose} hitSlop={10} accessibilityRole="button" accessibilityLabel="안내 끝내기">
+              <Text style={styles.close}>✕</Text>
+            </Pressable>
+          </View>
         </View>
         {!!title && <Text style={styles.title}>{title}</Text>}
         <Text style={styles.text}>{text}</Text>
@@ -213,7 +220,9 @@ const styles = StyleSheet.create({
     paddingVertical: 3,
     overflow: 'hidden',
   },
+  headBtns: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   skip: { color: colors.grayLight, fontSize: 13, fontWeight: '600' },
+  close: { color: colors.grayLight, fontSize: 15, fontWeight: '600' },
   title: { fontSize: 18, fontWeight: '800', color: colors.navy, marginBottom: 6 },
   text: { fontSize: sizes.fontSmall, color: colors.darkText, lineHeight: 24 },
   hint: { marginTop: 10, fontSize: 13, color: colors.primary, fontWeight: '700' },

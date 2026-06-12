@@ -50,7 +50,7 @@ const TOUR: {
   {
     target: null,
     title: '직접 해보며 배우기',
-    text: '화면에 밝게 표시되는 버튼을 하나씩 직접 눌러보면서 배우는 안내예요. 언제든 「건너뛰기」로 끝낼 수 있어요.',
+    text: '화면에 밝게 표시되는 버튼을 하나씩 직접 눌러보면서 배우는 안내예요. 단계를 넘기려면 「건너뛰기」, 끝내려면 ✕를 누르세요.',
     action: '시작하기',
   },
   {
@@ -214,6 +214,18 @@ export default function HomeScreen({ navigation }: Props) {
       watching = false;
     };
   }, []);
+
+  // 투어 한 단계 건너뛰기 — 다음 단계 대상이 편집 모드 안에 있으면 편집 모드를 켜준다
+  const skipTourStep = () => {
+    if (tour == null) return;
+    const next = tour + 1;
+    if (next >= TOUR.length) {
+      setTour(null);
+      return;
+    }
+    if (next >= 2 && next <= 5 && !editing) setEditing(true);
+    setTour(next);
+  };
 
   // 즐겨찾기 → 도착지로 설정 후 경로 탐색
   const onFavorite = (place: FavoritePlace) => {
@@ -493,7 +505,8 @@ export default function HomeScreen({ navigation }: Props) {
           text={TOUR[tour].text}
           step={tour}
           total={TOUR.length}
-          onSkip={() => setTour(null)}
+          onSkip={skipTourStep}
+          onClose={() => setTour(null)}
           actionLabel={TOUR[tour].action}
           onAction={
             TOUR[tour].action
