@@ -51,7 +51,7 @@ function renderKakaoMap(
   const map = new kakao.maps.Map(el, {
     center: new kakao.maps.LatLng(centerLat, centerLng),
     level: 6,
-    mapTypeId: kakao.maps.MapTypeId.HYBRID,
+    mapTypeId: kakao.maps.MapTypeId.ROADMAP, // 기본 일반지도 (위성은 우상단 토글)
   });
   map.addControl(new kakao.maps.MapTypeControl(), kakao.maps.ControlPosition.TOPRIGHT);
   map.addControl(new kakao.maps.ZoomControl(), kakao.maps.ControlPosition.RIGHT);
@@ -279,7 +279,7 @@ function buildHtml(
         var map = new kakao.maps.Map(document.getElementById('map'), {
           center: new kakao.maps.LatLng(${centerLat}, ${centerLng}),
           level: 6,
-          mapTypeId: kakao.maps.MapTypeId.HYBRID
+          mapTypeId: kakao.maps.MapTypeId.ROADMAP
         });
         // 일반/위성(스카이뷰) 토글 + 줌 컨트롤
         map.addControl(new kakao.maps.MapTypeControl(), kakao.maps.ControlPosition.TOPRIGHT);
