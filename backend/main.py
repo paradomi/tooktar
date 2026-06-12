@@ -365,34 +365,50 @@ def diagram_analysis(
     return {"insight": insight or ""}
 
 
+def _bus_check_jobs(route):
+    """경로의 버스 step별 (station_id, bus_no, timed) 생성.
+    timed=True는 경로의 첫 대중교통이 이 버스인 경우 — 그때만 '지금부터 25분 이내' 기준이 유효.
+    환승 버스는 도착 시점을 알 수 없으므로 노선 저상 운행 여부로만 판정."""
+    steps = route.get("steps", []) or []
+    first_transit_idx = next(
+        (i for i, s in enumerate(steps) if s.get("type") in ("bus", "subway")), -1
+    )
+    out = []
+    for i, s in enumerate(steps):
+        if s.get("type") != "bus":
+            continue
+        bus_no = s.get("bus_no", "")
+        if not bus_no:
+            continue
+        timed = i == first_transit_idx
+        station_id = s.get("start_id") if timed else None
+        out.append((station_id, bus_no, timed))
+    return out
+
+
 @app.post("/routes/score-low-floor")
 def score_low_floor(req: ScoreReq):
     """경로별 저상버스 친화도 점수 (저상 조회를 중복 제거 + 병렬 처리).
     반환: [{"id", "score", "tier"}]
       score: 1.0=전 구간 저상확보, 0~1=부분, 0=저상없음, null=미확인, "subway_only"=버스없음
       tier:  0=확정/지하철, 1=부분, 2=미확인, 3=저상없음 (작을수록 우선)
-    저상 확보 판정은 25분 이내 도착 차량 기준.
+    저상 확보 판정: 첫 대중교통이 버스인 step만 25분 이내 도착 기준, 환승 버스는 노선 저상 운행 여부 기준.
     """
-    # 1) 모든 경로의 버스 step에서 필요한 (station_id, bus_no) 검사를 중복 제거
-    jobs = {}  # (station_id_or_empty, bus_no) -> (station_id, bus_no)
+    # 1) 모든 경로의 버스 step에서 필요한 검사를 중복 제거 (timed 여부 포함)
+    jobs = {}  # (station_id_or_empty, bus_no, timed) -> (station_id, bus_no, timed)
     for route in req.routes:
-        for s in (route.get("steps", []) or []):
-            if s.get("type") != "bus":
-                continue
-            bus_no = s.get("bus_no", "")
-            if not bus_no:
-                continue
-            station_id = s.get("start_id")
-            key = (station_id or "", bus_no)
+        for station_id, bus_no, timed in _bus_check_jobs(route):
+            key = (station_id or "", bus_no, timed)
             if key not in jobs:
-                jobs[key] = (station_id, bus_no)
+                jobs[key] = (station_id, bus_no, timed)
 
     # 2) 병렬로 저상 운행 여부 조회
     def _check(item):
-        station_id, bus_no = item
+        station_id, bus_no, timed = item
         try:
-            if station_id:
+            if timed and station_id:
                 return has_low_floor_arriving(station_id, bus_no, max_stops_ahead=15, fast=True, max_wait_min=25)
+            # 환승 버스(또는 정류장 매칭 불가): 노선에 저상 차량 운행 중인지로 판정
             return has_low_floor_on_route(bus_no)
         except Exception:
             return False
@@ -416,14 +432,10 @@ def score_low_floor(req: ScoreReq):
 
         ok = 0
         data_steps = 0
-        for s in bus_steps:
-            bus_no = s.get("bus_no", "")
-            if not bus_no:
-                continue
-            key = (s.get("start_id") or "", bus_no)
-            step_ok = bool(cache.get(key, False))
+        for station_id, bus_no, timed in _bus_check_jobs(route):
+            key = (station_id or "", bus_no, timed)
             data_steps += 1
-            if step_ok:
+            if bool(cache.get(key, False)):
                 ok += 1
 
         if data_steps == 0:
