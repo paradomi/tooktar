@@ -6,8 +6,12 @@
  *  - 웹/iOS 시뮬레이터: http://localhost:8000
  *  - Android 에뮬레이터: http://10.0.2.2:8000  (에뮬레이터→호스트 매핑)
  *  - 실기기: 같은 와이파이의 PC 내부 IP (예: http://192.168.0.x:8000)
+ *  - 개발 백엔드가 응답 없으면 checkHealth()가 배포 백엔드(PROD_URL)로 자동 전환
  */
 import { Platform } from 'react-native';
+
+// 배포 백엔드 (Render) — 개발용 로컬 백엔드가 응답하지 않을 때 자동 폴백
+const PROD_URL = 'https://tooktar.onrender.com';
 
 const HOST =
   Platform.OS === 'android' ? 'http://10.0.2.2:8000' : 'http://localhost:8000';
@@ -16,7 +20,7 @@ const HOST =
 // 개발 시 .env 의 PC IP(http://192.168...)는 실기기(폰) 전용이므로 웹에서는 무시 → localhost.
 // 네이티브(폰/에뮬레이터)는 EXPO_PUBLIC_API_URL(PC 내부 IP) 우선.
 const ENV_URL = process.env.EXPO_PUBLIC_API_URL || '';
-export const BASE_URL =
+let baseUrl =
   Platform.OS === 'web'
     ? ENV_URL.startsWith('https://')
       ? ENV_URL
@@ -47,7 +51,7 @@ async function getJson<T>(path: string, timeoutMs = 8000): Promise<T> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
-    const res = await fetch(`${BASE_URL}${path}`, { signal: ctrl.signal });
+    const res = await fetch(`${baseUrl}${path}`, { signal: ctrl.signal });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     notifyAlive();
     return (await res.json()) as T;
@@ -60,7 +64,7 @@ async function postJson<T>(path: string, body: unknown, timeoutMs = 12000): Prom
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
-    const res = await fetch(`${BASE_URL}${path}`, {
+    const res = await fetch(`${baseUrl}${path}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -85,8 +89,8 @@ export async function waitForBackend(maxMs = 75000): Promise<boolean> {
   return false;
 }
 
-/** 백엔드 헬스 체크 */
-export async function checkHealth(timeoutMs = 3000): Promise<boolean> {
+/** 헬스 체크 1회 시도 (현재 baseUrl 대상) */
+async function pingHealth(timeoutMs: number): Promise<boolean> {
   try {
     const r = await getJson<{ status: string }>('/health', timeoutMs);
     return r.status === 'ok';
@@ -95,16 +99,27 @@ export async function checkHealth(timeoutMs = 3000): Promise<boolean> {
   }
 }
 
+/** 백엔드 헬스 체크. 개발용 주소(http)가 죽어 있으면 배포 백엔드로 영구 전환 후 재시도. */
+export async function checkHealth(timeoutMs = 3000): Promise<boolean> {
+  if (await pingHealth(timeoutMs)) return true;
+  // 개발 백엔드(localhost/PC IP)가 안 떠 있으면 배포 백엔드로 전환
+  if (!baseUrl.startsWith('https://')) {
+    baseUrl = PROD_URL;
+    return pingHealth(Math.max(timeoutMs, 8000));
+  }
+  return false;
+}
+
 /** 공개 설정 (카카오맵 JS 키 등) */
 let _configCache: { kakao_js_key: string } | null = null;
 export async function getConfig(): Promise<{ kakao_js_key: string }> {
   if (_configCache) return _configCache;
   try {
     _configCache = await getJson<{ kakao_js_key: string }>('/config', 4000);
+    return _configCache;
   } catch {
-    _configCache = { kakao_js_key: '' };
+    return { kakao_js_key: '' }; // 실패는 캐시하지 않음 — 다음 호출에서 재시도
   }
-  return _configCache;
 }
 
 /** ODsay loadLane — 경로 실제 주행 폴리라인 (백엔드 /routes/lane) */
