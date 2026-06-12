@@ -10,8 +10,10 @@ import {
   StyleSheet,
   ActivityIndicator,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { colors, sizes } from '../theme';
 import { searchPlaces, type PlaceResult, type Coord } from '../api/client';
+import { useSpeechRecognition } from '../hooks/useSpeechRecognition';
 
 interface Props {
   placeholder: string;
@@ -34,6 +36,11 @@ export default function PlaceSearchInput({
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // 선택 직후엔 그 변경으로 다시 검색하지 않도록 가드
   const skipNext = useRef(false);
+
+  // 음성 인식 결과를 입력값에 반영 → 기존 디바운스 검색이 그대로 이어진다
+  const { supported: micSupported, listening, start, stop } = useSpeechRecognition((text) => {
+    onChangeText(text);
+  });
 
   useEffect(() => {
     if (skipNext.current) {
@@ -92,7 +99,7 @@ export default function PlaceSearchInput({
     <View style={styles.wrap}>
       <View style={styles.inputRow}>
         <TextInput
-          style={styles.input}
+          style={[styles.input, micSupported && styles.inputWithMic]}
           placeholder={placeholder}
           placeholderTextColor={colors.grayLight}
           value={value}
@@ -102,7 +109,26 @@ export default function PlaceSearchInput({
           onBlur={handleBlur}
           autoCorrect={false}
         />
-        {loading && <ActivityIndicator style={styles.spinner} color={colors.primary} />}
+        {loading && (
+          <ActivityIndicator
+            style={[styles.spinner, micSupported && styles.spinnerWithMic]}
+            color={colors.primary}
+          />
+        )}
+        {micSupported && (
+          <Pressable
+            style={[styles.micButton, listening && styles.micButtonActive]}
+            onPress={listening ? stop : start}
+            accessibilityLabel={listening ? '음성 입력 중지' : '음성으로 검색'}
+            accessibilityRole="button"
+          >
+            <Ionicons
+              name={listening ? 'mic' : 'mic-outline'}
+              size={26}
+              color={listening ? colors.danger : colors.grayLight}
+            />
+          </Pressable>
+        )}
       </View>
 
       {open && (
@@ -143,7 +169,24 @@ const styles = StyleSheet.create({
     fontSize: sizes.fontBody,
     color: colors.darkText,
   },
+  // 마이크 버튼이 보일 때는 더 넓게 비워둔다 (버튼 겹침 방지)
+  inputWithMic: { paddingRight: 56 },
   spinner: { position: 'absolute', right: 14 },
+  // 마이크 버튼이 있을 때 스피너를 더 왼쪽으로 이동
+  spinnerWithMic: { right: 56 },
+  // 입력창 오른쪽 끝, 수직 중앙 정렬 (입력창 height 54 기준)
+  micButton: {
+    position: 'absolute',
+    right: 3,
+    top: 3,
+    width: sizes.minTouch,
+    height: sizes.minTouch,
+    borderRadius: sizes.minTouch / 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  // 듣는 중: 옅은 빨강 원형 배경으로 녹음 중임을 표시
+  micButtonActive: { backgroundColor: 'rgba(217,83,79,0.12)' },
   dropdown: {
     backgroundColor: colors.card,
     borderWidth: 1,
