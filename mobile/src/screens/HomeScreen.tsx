@@ -305,7 +305,12 @@ export default function HomeScreen({ navigation }: Props) {
           </Pressable>
           <Pressable
             style={styles.settingsBtn}
-            onPress={() => setTour(0)}
+            onPress={() => {
+              // 사용법은 항상 처음 상태에서 시작 — 편집 모드가 켜져 있으면 단계가 건너뛰어지는 버그 방지
+              setEditing(false);
+              setEditIndex(null);
+              setTour(0);
+            }}
             accessibilityRole="button"
             accessibilityLabel="사용법 안내 보기"
           >
