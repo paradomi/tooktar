@@ -3,7 +3,7 @@
  *  rect 가 null 이면 중앙 안내 카드(인트로/마무리)로 표시.
  */
 import React, { useEffect, useRef } from 'react';
-import { View, Text, Pressable, Animated, Easing, StyleSheet, useWindowDimensions } from 'react-native';
+import { View, Text, Pressable, Animated, Easing, StyleSheet, ScrollView, useWindowDimensions } from 'react-native';
 import { colors, sizes } from '../theme';
 
 export interface SpotRect {
@@ -99,6 +99,9 @@ export default function CoachMark({
   }
   const arrowX = hole ? Math.min(Math.max(18, hole.x + hole.w / 2 - bubbleLeft - 9), bubbleW - 36) : 0;
 
+  // 말풍선이 화면 아래로 넘치지 않도록 최대 높이 제한 (넘치면 본문이 안에서 스크롤)
+  const bubbleMaxH = winH - bubbleTop - 14;
+
   const ringScale = pulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.06] });
   const ringOpacity = pulse.interpolate({ inputRange: [0, 1], outputRange: [0.95, 0.45] });
 
@@ -143,6 +146,7 @@ export default function CoachMark({
             top: bubbleTop,
             left: bubbleLeft,
             width: bubbleW,
+            maxHeight: bubbleMaxH,
             opacity: bubbleIn,
             transform: [
               {
@@ -169,8 +173,10 @@ export default function CoachMark({
             </Pressable>
           </View>
         </View>
-        {!!title && <Text style={styles.title}>{title}</Text>}
-        <Text style={styles.text}>{text}</Text>
+        <ScrollView style={styles.bodyScroll} bounces={false} showsVerticalScrollIndicator>
+          {!!title && <Text style={styles.title}>{title}</Text>}
+          <Text style={styles.text}>{text}</Text>
+        </ScrollView>
         {actionLabel && onAction && (
           <Pressable
             style={styles.actionBtn}
@@ -220,6 +226,7 @@ const styles = StyleSheet.create({
     paddingVertical: 3,
     overflow: 'hidden',
   },
+  bodyScroll: { flexGrow: 0, flexShrink: 1 },
   headBtns: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   skip: { color: colors.grayLight, fontSize: 13, fontWeight: '600' },
   close: { color: colors.grayLight, fontSize: 15, fontWeight: '600' },
