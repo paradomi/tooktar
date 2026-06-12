@@ -33,6 +33,7 @@ import {
   type Coord,
 } from '../api/client';
 import { getCurrentCoord } from '../utils/location';
+import { useSpeechRecognition } from '../hooks/useSpeechRecognition';
 import type { RootStackParamList } from '../navigation/types';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Home'>;
@@ -101,6 +102,8 @@ export default function HomeScreen({ navigation }: Props) {
     useFavorites();
   const { recents, addRecent, removeRecent, clearRecents } = useRecents();
   const [editing, setEditing] = useState(false);
+  // 음성인식 지원 여부 — 라벨 표시용 (마이크 버튼이 숨겨지는 브라우저에선 라벨도 숨김)
+  const { supported: micSupported } = useSpeechRecognition(() => {});
   // 편집 중인 즐겨찾기 index (null 이면 새 장소 추가 모드)
   const [editIndex, setEditIndex] = useState<number | null>(null);
   // 인터랙티브 투어: 현재 단계 (null=꺼짐)
@@ -389,7 +392,10 @@ export default function HomeScreen({ navigation }: Props) {
 
         {/* 출발/도착 입력 (자동완성) */}
         <View ref={searchRef} collapsable={false}>
-          <Text style={styles.sectionTitle}>🔍 경로 검색</Text>
+          <View style={styles.searchHeader}>
+            <Text style={styles.sectionTitle}>🔍 경로 검색</Text>
+            {micSupported && <Text style={styles.micHint}>음성인식</Text>}
+          </View>
           <PlaceSearchInput
             placeholder="📍 출발지 (비워두면 현재 위치)"
             value={origin}
@@ -509,6 +515,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
   },
+  searchHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  // 마이크 버튼 바로 위에 오는 작은 안내 라벨
+  micHint: { fontSize: 13, color: colors.gray, marginRight: 14 },
   clearAllText: { fontSize: sizes.fontSmall, color: colors.gray, fontWeight: '700' },
   recentRow: {
     flexDirection: 'row',
