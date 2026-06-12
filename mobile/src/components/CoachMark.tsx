@@ -84,23 +84,29 @@ export default function CoachMark({
 
   // 말풍선 위치: 구멍 아래 공간이 충분하면 아래, 아니면 위
   const bubbleW = Math.min(330, winW - 28);
-  let bubbleTop = winH / 2 - 120;
   let bubbleLeft = (winW - bubbleW) / 2;
   let arrowUp = false; // 말풍선이 구멍 '아래'에 있으면 위쪽 화살표
+  // 구멍을 절대 가리지 않도록, 위/아래 중 넓은 쪽 공간 안에서만 말풍선을 배치한다.
+  // 아래쪽이면 top 고정(구멍 바로 아래), 위쪽이면 bottom 고정(구멍 바로 위)으로 앵커.
+  let bubbleTop: number | undefined = winH / 2 - 120; // 인트로(구멍 없음) 기본
+  let bubbleBottom: number | undefined;
+  let bubbleMaxH = winH - bubbleTop - 14;
   if (hole) {
-    const below = hole.y + hole.h + 14;
-    if (below + 190 < winH) {
-      bubbleTop = below;
+    const spaceBelow = winH - (hole.y + hole.h + 14) - 14;
+    const spaceAbove = hole.y - 14 - 14;
+    if (spaceBelow >= spaceAbove) {
+      bubbleTop = hole.y + hole.h + 14;
+      bubbleBottom = undefined;
+      bubbleMaxH = spaceBelow;
       arrowUp = true;
     } else {
-      bubbleTop = Math.max(14, hole.y - 14 - 190);
+      bubbleTop = undefined;
+      bubbleBottom = winH - (hole.y - 14); // 구멍 바로 위에 하단 앵커
+      bubbleMaxH = spaceAbove;
     }
     bubbleLeft = Math.min(Math.max(14, hole.x + hole.w / 2 - bubbleW / 2), winW - bubbleW - 14);
   }
   const arrowX = hole ? Math.min(Math.max(18, hole.x + hole.w / 2 - bubbleLeft - 9), bubbleW - 36) : 0;
-
-  // 말풍선이 화면 아래로 넘치지 않도록 최대 높이 제한 (넘치면 본문이 안에서 스크롤)
-  const bubbleMaxH = winH - bubbleTop - 14;
 
   const ringScale = pulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.06] });
   const ringOpacity = pulse.interpolate({ inputRange: [0, 1], outputRange: [0.95, 0.45] });
@@ -143,7 +149,7 @@ export default function CoachMark({
         style={[
           styles.bubble,
           {
-            top: bubbleTop,
+            ...(bubbleTop != null ? { top: bubbleTop } : { bottom: bubbleBottom }),
             left: bubbleLeft,
             width: bubbleW,
             maxHeight: bubbleMaxH,
